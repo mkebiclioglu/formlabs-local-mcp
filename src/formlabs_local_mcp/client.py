@@ -80,7 +80,14 @@ class PreFormClient:
         with a float in [0.0, 1.0] each time progress changes.
         """
         accepted = await self.request("POST", path, json=json, params={"async": "true"})
-        op_id = accepted.get("id") or accepted.get("operation_id")
+        # PreFormServer uses `operationId` (camelCase) in the OperationAcceptedModel.
+        # Older drafts of the spec referenced `operation_id` / `id`; accept all three
+        # to stay forward-compatible.
+        op_id = (
+            accepted.get("operationId")
+            or accepted.get("operation_id")
+            or accepted.get("id")
+        )
         if not op_id:
             # Server didn't honour async — assume the response IS the result.
             return accepted

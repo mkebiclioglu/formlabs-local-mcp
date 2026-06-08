@@ -58,7 +58,7 @@ async def test_error_response_translates_to_preform_error() -> None:
 @respx.mock
 async def test_async_operation_polls_until_succeeded() -> None:
     respx.post("http://localhost:44388/scene/default/auto-orient/").mock(
-        return_value=httpx.Response(202, json={"id": "op-123"})
+        return_value=httpx.Response(202, json={"operationId": "op-123"})
     )
     # First poll: in progress. Second poll: done.
     respx.get("http://localhost:44388/operations/op-123/").mock(
@@ -116,6 +116,22 @@ async def test_async_operation_failed_raises() -> None:
             await client.post_async_operation("/scene/default/auto-support/", json={"models": "ALL"})
         assert exc.value.code == "SUPPORT_GEN_FAILED"
         assert "Bad mesh" in str(exc.value)
+    finally:
+        await client.close()
+
+
+@respx.mock
+async def test_async_operation_handles_inline_result() -> None:
+    """If the server returns the result directly (no operation_id), pass it through."""
+    respx.post("http://localhost:44388/scene/default/auto-orient/").mock(
+        return_value=httpx.Response(200, json={"oriented": 1})
+    )
+    client = PreFormClient(_config())
+    try:
+        result = await client.post_async_operation(
+            "/scene/default/auto-orient/", json={"models": "ALL"}
+        )
+        assert result == {"oriented": 1}
     finally:
         await client.close()
 

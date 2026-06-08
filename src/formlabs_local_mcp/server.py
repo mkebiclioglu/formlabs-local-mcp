@@ -158,38 +158,82 @@ async def import_model(
     scene_id: str = "default",
     name: str | None = None,
     scale: float = 1.0,
-    units: str | None = None,
-    repair_behavior: str | None = None,
+    units: str = "MILLIMETERS",
+    repair_behavior: str = "REPAIR",
     position: dict | None = None,
     orientation: dict | None = None,
 ) -> dict:
     """Import an STL/OBJ model into a scene.
 
-    `file` MUST be an absolute path. `units` is one of MILLIMETERS, CENTIMETERS,
-    INCHES, METERS, MICRONS. `repair_behavior` is REPAIR, KEEP_AS_IS, or NONE.
-    `position` / `orientation` are {x, y, z} dicts.
+    `file` MUST be an absolute path. Returns the imported model's properties
+    including its `id`.
 
-    Returns the imported model's properties (including its `id`).
+    Defaults that differ from the bare API:
+    - `repair_behavior` defaults to `REPAIR`. The raw API default is
+      `KEEP_AS_IS`, which silently produces an empty scene for STLs exported
+      by many CAD tools (OpenCASCADE, Fusion 360, etc.). Pass `"KEEP_AS_IS"`
+      or `"NONE"` if you need to preserve the original mesh exactly.
+    - `units` defaults to `MILLIMETERS`. Pass `CENTIMETERS`, `INCHES`,
+      `METERS`, or `MICRONS` if your file uses something else.
+
+    Post-import verification: this tool re-reads the scene after the import
+    operation reports SUCCEEDED and raises an error if the model count did
+    not actually increase — defense against the silent-failure mode where
+    the operation succeeds but the mesh fails to load.
     """
-    body: dict[str, Any] = {"file": file, "scale": scale}
+    client = _client(ctx)
+    body: dict[str, Any] = {
+        "file": file,
+        "scale": scale,
+        "units": units,
+        "repair_behavior": repair_behavior,
+    }
     if name:
         body["name"] = name
-    if units:
-        body["units"] = units
-    if repair_behavior:
-        body["repair_behavior"] = repair_behavior
     if position:
         body["position"] = position
     if orientation:
         body["orientation"] = orientation
 
+    # Count models before for the post-condition check.
+    try:
+        before_scene = await client.get(f"/scene/{scene_id}/")
+        before_count = len(before_scene.get("models") or [])
+    except PreFormError:
+        before_count = 0
+
     await _report_progress(ctx, 0.0, "importing model")
-    result = await _client(ctx).post_async_operation(
+    result = await client.post_async_operation(
         f"/scene/{scene_id}/import-model/",
         json=body,
         progress_callback=lambda p: _report_progress(ctx, p, "importing model"),
     )
     await _report_progress(ctx, 1.0, "imported")
+
+    # Defense in depth: confirm the scene actually has more models now.
+    after_scene = await client.get(f"/scene/{scene_id}/")
+    after_models = after_scene.get("models") or []
+    if len(after_models) <= before_count:
+        raise PreFormError(
+            500,
+            "IMPORT_PRODUCED_EMPTY_SCENE",
+            (
+                f"PreFormServer reported a successful import of {file} but the scene "
+                f"still contains {len(after_models)} model(s). The STL likely failed "
+                "to parse — try a different repair_behavior, verify the units, or "
+                "open the file in PreForm to diagnose."
+            ),
+            body={"scene_id": scene_id, "import_result": result},
+        )
+
+    # If the async result lacked the model id (some PreFormServer versions),
+    # fall back to the newly-added model from the scene.
+    if isinstance(result, dict) and not result.get("id"):
+        # The new model is whichever model wasn't there before.
+        before_ids = {m.get("id") for m in (before_scene.get("models") or [])}
+        new_models = [m for m in after_models if m.get("id") not in before_ids]
+        if new_models:
+            return new_models[-1]
     return result
 
 
@@ -480,13 +524,55 @@ async def print_to_printer(
 # ---------------------------------------------------------------------------
 
 @mcp.tool()
-async def list_materials(
-    ctx: Context,
-    machine_type: str | None = None,
-) -> dict:
-    """List available materials and print settings. Optionally filter by machine_type."""
-    params = {"machine_type": machine_type} if machine_type else None
-    return await _client(ctx).get("/list-materials/", params=params)
+async def list_materials(ctx: Context) -> dict:
+    """List every printer type, material, and print setting PreFormServer knows about.
+
+    Returns `{"printer_types": [...]}` where each printer entry contains its
+    `label`, `build_volume_dimensions_mm`, and a `materials` list. Each material
+    has `material_settings` with the exact `machine_type`, `material_code`,
+    `print_setting`, and `layer_thickness_mm` you need to pass to `create_scene`.
+
+    NOTE: this endpoint ignores query parameters — you always get the full
+    list. For a smaller summary of just printer codes, use `list_printer_types`.
+    """
+    return await _client(ctx).get("/list-materials/")
+
+
+@mcp.tool()
+async def list_printer_types(ctx: Context) -> list[dict]:
+    """Quick reference for the machine_type codes you can pass to create_scene.
+
+    Returns a list of `{machine_type, label, build_volume_dimensions_mm}` —
+    one entry per printer family PreFormServer supports. Use this when the
+    user names a printer ("the Form 4", "the Fuse") to look up the right code.
+
+    Common values for context:
+      - FORM-4-0    Form 4 / 4B (SLA — use auto_layout)
+      - FORM-3-0    Form 3 / 3B / 3+ / 3B+ (SLA — use auto_layout)
+      - FORM-2-0    Form 2 (SLA — use auto_layout)
+      - FS30-1-0    Fuse 1+ 30W (SLS — use auto_pack)
+      - FS-1-0      Fuse 1 (SLS — use auto_pack)
+    """
+    materials = await _client(ctx).get("/list-materials/")
+    printers = materials.get("printer_types") or []
+    out: list[dict] = []
+    for p in printers:
+        # Pick the first material's first setting to surface the machine_type code.
+        codes: set[str] = set()
+        for m in p.get("materials") or []:
+            for s in m.get("material_settings") or []:
+                code = (s.get("scene_settings") or {}).get("machine_type")
+                if code:
+                    codes.add(code)
+        for code in sorted(codes):
+            out.append(
+                {
+                    "machine_type": code,
+                    "label": p.get("label"),
+                    "build_volume_dimensions_mm": p.get("build_volume_dimensions_mm"),
+                }
+            )
+    return out
 
 
 @mcp.tool()
