@@ -27,43 +27,57 @@ against real hardware. PRs and bug reports welcome.
 
 ## Install
 
-The easiest way is `uvx`, which downloads the package on demand into an
-isolated environment:
+Clone the repo and install it into a virtual environment:
 
 ```bash
-uvx formlabs-local-mcp
+git clone https://github.com/mkebiclioglu/formlabs-local-mcp.git
+cd formlabs-local-mcp
+python -m venv .venv
+source .venv/bin/activate
+pip install -e .
 ```
 
-Or install into your own environment:
-
-```bash
-pip install formlabs-local-mcp
-```
+The `pip install -e .` step creates a `formlabs-local-mcp` script inside
+`.venv/bin/` — note its absolute path (e.g.
+`/Users/you/formlabs-local-mcp/.venv/bin/formlabs-local-mcp`). You'll point
+your MCP client at it.
 
 ## Configure your MCP client
 
 ### Claude Code
 
-Add the server to your `.claude/mcp.json` (project) or `~/.claude/mcp.json` (global):
+Easiest path is the CLI:
+
+```bash
+claude mcp add formlabs \
+  -s user \
+  -e PREFORM_SERVER_PATH=/path/to/PreFormServer.app/Contents/MacOS/PreFormServer \
+  -- /absolute/path/to/formlabs-local-mcp/.venv/bin/formlabs-local-mcp
+```
+
+Or edit `~/.claude.json` (or `.claude/mcp.json` for project scope) directly:
 
 ```json
 {
   "mcpServers": {
     "formlabs": {
-      "command": "uvx",
-      "args": ["formlabs-local-mcp"],
+      "command": "/absolute/path/to/formlabs-local-mcp/.venv/bin/formlabs-local-mcp",
       "env": {
-        "PREFORM_SERVER_PATH": "/Applications/PreFormServer.app/Contents/MacOS/PreFormServer"
+        "PREFORM_SERVER_PATH": "/path/to/PreFormServer.app/Contents/MacOS/PreFormServer"
       }
     }
   }
 }
 ```
 
+Confirm it's wired up: `claude mcp list` should show `formlabs: ✓ Connected`.
+
 ### Claude Desktop
 
-Add the same block to `~/Library/Application Support/Claude/claude_desktop_config.json`
-(macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows).
+Add the same `mcpServers` block to
+`~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or
+`%APPDATA%\Claude\claude_desktop_config.json` (Windows). Restart Claude
+Desktop after editing.
 
 ## PreFormServer lifecycle
 
@@ -116,16 +130,16 @@ these tools end to end.
 
 ## Development
 
+In your already-cloned repo:
+
 ```bash
-git clone https://github.com/mkebiclioglu/formlabs-local-mcp
-cd formlabs-local-mcp
-python -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
 pytest
 ```
 
-To run the server against a local PreFormServer:
+To run the server directly against a local PreFormServer (outside of an MCP
+client, useful for debugging):
 
 ```bash
 PREFORM_SERVER_PATH=/path/to/PreFormServer formlabs-local-mcp
