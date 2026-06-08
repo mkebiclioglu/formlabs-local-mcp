@@ -1,0 +1,48 @@
+name: Bug report
+description: Something works incorrectly or unexpectedly
+labels: [bug]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug, including which tool was called and what you expected to happen.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: How can we reproduce it?
+      description: |
+        The exact prompt or sequence of tool calls. If possible, include the STL/OBJ file
+        (or a minimal one that reproduces the issue) and which Formlabs printer + material you used.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: formlabs-local-mcp version
+      description: From `pip show formlabs-local-mcp` or the version line in `pyproject.toml`.
+      placeholder: "0.1.1"
+    validations:
+      required: true
+  - type: input
+    id: preform-version
+    attributes:
+      label: PreFormServer version
+      description: Returned by the `health_check` tool, e.g. "3.59.1.632".
+    validations:
+      required: false
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      placeholder: "macOS 15.2 / Windows 11 / ..."
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: PreFormServer stderr lines (the `[preform] …` ones from your MCP client) or any error from the tool call.
+      render: text

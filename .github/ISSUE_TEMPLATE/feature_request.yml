@@ -1,0 +1,25 @@
+name: Feature request
+description: Suggest a new tool, parameter, or behavior
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What's the problem?
+      description: What workflow or use case is awkward / impossible today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like to see?
+      description: |
+        Ideally include the matching Formlabs API endpoint (if any), the tool name you'd
+        suggest, and the parameters you think it should take.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Any workarounds you've tried, or related tools that already exist.
