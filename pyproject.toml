@@ -1,0 +1,57 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "formlabs-local-mcp"
+version = "0.1.0"
+description = "Model Context Protocol server for the Formlabs Local API (PreFormServer)"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+authors = [
+    { name = "Mustafa Ebiclioglu" },
+]
+keywords = ["mcp", "formlabs", "3d-printing", "preform", "claude"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Printing",
+]
+dependencies = [
+    "mcp>=1.2.0",
+    "httpx>=0.27.0",
+    "pydantic>=2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.23",
+    "respx>=0.21",
+    "ruff>=0.5",
+]
+
+[project.scripts]
+formlabs-local-mcp = "formlabs_local_mcp.server:main"
+
+[project.urls]
+Homepage = "https://github.com/mkebiclioglu/formlabs-local-mcp"
+Repository = "https://github.com/mkebiclioglu/formlabs-local-mcp"
+Issues = "https://github.com/mkebiclioglu/formlabs-local-mcp/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/formlabs_local_mcp"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
