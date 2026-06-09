@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -32,6 +33,7 @@ log = logging.getLogger("formlabs_local_mcp")
 class AppContext:
     client: PreFormClient
     preform: PreFormServerProcess
+    config: Config
 
 
 @asynccontextmanager
@@ -41,7 +43,7 @@ async def app_lifespan(_server: FastMCP) -> AsyncIterator[AppContext]:
     await preform.ensure_running()
     client = PreFormClient(config)
     try:
-        yield AppContext(client=client, preform=preform)
+        yield AppContext(client=client, preform=preform, config=config)
     finally:
         await client.close()
         await preform.shutdown()
@@ -61,6 +63,10 @@ mcp = FastMCP(
 
 def _client(ctx: Context) -> PreFormClient:
     return ctx.request_context.lifespan_context.client  # type: ignore[attr-defined]
+
+
+def _config(ctx: Context) -> Config:
+    return ctx.request_context.lifespan_context.config  # type: ignore[attr-defined]
 
 
 async def _report_progress(ctx: Context, fraction: float, label: str) -> None:
@@ -729,6 +735,15 @@ async def list_printer_types(ctx: Context) -> list[dict]:
 @mcp.tool()
 async def login(ctx: Context, username: str, password: str) -> dict:
     """Log in to Formlabs Web Services. Required for remote printing and Fleet Control."""
+    config = _config(ctx)
+    if not config.is_loopback and os.environ.get("FORMLABS_ALLOW_REMOTE_LOGIN") != "1":
+        raise ValueError(
+            "Refusing to send credentials to a non-loopback PreFormServer URL "
+            f"({config.base_url}). HTTP traffic is unencrypted on the wire, so "
+            "sending a password to a remote host risks interception. Set "
+            "FORMLABS_ALLOW_REMOTE_LOGIN=1 only if PreFormServer is on a trusted "
+            "network (loopback over a VPN, HTTPS-terminated proxy, etc.)."
+        )
     result = await _client(ctx).post(
         "/login/",
         json={"username": username, "password": password},
