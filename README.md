@@ -100,6 +100,26 @@ The MCP server has two modes for talking to PreFormServer:
 | `PREFORM_SPAWN` | `1` | Set to `0` to disable spawning even if `PREFORM_SERVER_PATH` is set. |
 | `PREFORM_POLL_INTERVAL` | `2.0` | Seconds between operation status polls. |
 | `PREFORM_POLL_TIMEOUT` | `600` | Maximum seconds to wait for any async operation. |
+| `FORMLABS_MCP_ALLOWED_PATHS` | _(unset)_ | Colon-separated directory prefixes the LLM-driven tools may read from / write to. If unset, any absolute path is accepted and a warning is logged at startup. See [Path allowlist](#path-allowlist) below. |
+
+## Path allowlist
+
+Several MCP tools (`import_model`, `load_form`, `save_form`, `save_screenshot`,
+`create_scene` with `fps_file`) forward absolute file paths to PreFormServer,
+which reads or writes the corresponding file. A prompt-injected LLM could in
+principle direct the server to write to `~/.ssh/authorized_keys` or read from
+`/etc/passwd`.
+
+To constrain that surface, set `FORMLABS_MCP_ALLOWED_PATHS` to a colon-separated
+list of directory prefixes the server is allowed to touch:
+
+```
+FORMLABS_MCP_ALLOWED_PATHS=$HOME/3d-prints:$HOME/Downloads
+```
+
+Each request's path is resolved (including symlinks) and rejected if it falls
+outside every prefix. If you don't set this var the MCP server still works as
+before, and you'll see one warning line at startup reminding you.
 
 ## Tools
 
