@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import ipaddress
 import os
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
 
 @dataclass(frozen=True)
@@ -14,6 +16,23 @@ class Config:
     spawn_preform_server: bool
     poll_interval_seconds: float
     poll_timeout_seconds: float
+
+    @property
+    def is_loopback(self) -> bool:
+        """True iff `base_url` points at the loopback interface.
+
+        Used by `login` to refuse sending credentials over plaintext HTTP to a
+        remote host. `localhost` is treated as loopback even though name
+        resolution could in theory disagree — the host the user typed is what
+        matters here.
+        """
+        host = (urlparse(self.base_url).hostname or "").lower()
+        if host in ("", "localhost"):
+            return True
+        try:
+            return ipaddress.ip_address(host).is_loopback
+        except ValueError:
+            return False
 
     @classmethod
     def from_env(cls) -> "Config":

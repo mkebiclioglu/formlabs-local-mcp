@@ -100,6 +100,7 @@ The MCP server has two modes for talking to PreFormServer:
 | `PREFORM_SPAWN` | `1` | Set to `0` to disable spawning even if `PREFORM_SERVER_PATH` is set. |
 | `PREFORM_POLL_INTERVAL` | `2.0` | Seconds between operation status polls. |
 | `PREFORM_POLL_TIMEOUT` | `600` | Maximum seconds to wait for any async operation. |
+| `FORMLABS_ALLOW_REMOTE_LOGIN` | `0` | Set to `1` to allow `login` to send credentials when `PREFORM_SERVER_URL` points off-loopback. Off by default because the wire is unencrypted HTTP. |
 
 ## Tools
 
