@@ -23,6 +23,7 @@ from mcp.server.fastmcp import Context, FastMCP
 
 from formlabs_local_mcp.client import PreFormClient, PreFormError
 from formlabs_local_mcp.config import Config
+from formlabs_local_mcp.paths import validate_path
 from formlabs_local_mcp.preform import PreFormServerProcess
 
 log = logging.getLogger("formlabs_local_mcp")
@@ -32,16 +33,25 @@ log = logging.getLogger("formlabs_local_mcp")
 class AppContext:
     client: PreFormClient
     preform: PreFormServerProcess
+    config: Config
 
 
 @asynccontextmanager
 async def app_lifespan(_server: FastMCP) -> AsyncIterator[AppContext]:
     config = Config.from_env()
+    if not config.allowed_path_prefixes:
+        log.warning(
+            "FORMLABS_MCP_ALLOWED_PATHS is not set — file-handling tools "
+            "accept any absolute path. To restrict where the MCP server "
+            "(via PreFormServer) can read/write, set this env var to a "
+            "colon-separated list of directory prefixes. "
+            "Example: FORMLABS_MCP_ALLOWED_PATHS=$HOME/3d-prints:$HOME/Downloads"
+        )
     preform = PreFormServerProcess(config)
     await preform.ensure_running()
     client = PreFormClient(config)
     try:
-        yield AppContext(client=client, preform=preform)
+        yield AppContext(client=client, preform=preform, config=config)
     finally:
         await client.close()
         await preform.shutdown()
@@ -61,6 +71,14 @@ mcp = FastMCP(
 
 def _client(ctx: Context) -> PreFormClient:
     return ctx.request_context.lifespan_context.client  # type: ignore[attr-defined]
+
+
+def _config(ctx: Context) -> Config:
+    return ctx.request_context.lifespan_context.config  # type: ignore[attr-defined]
+
+
+def _validate(ctx: Context, path: str) -> str:
+    return validate_path(path, _config(ctx).allowed_path_prefixes)
 
 
 async def _report_progress(ctx: Context, fraction: float, label: str) -> None:
@@ -103,7 +121,7 @@ async def create_scene(
     """
     body: dict[str, Any] = {"print_setting": print_setting}
     if fps_file:
-        body["fps_file"] = fps_file
+        body["fps_file"] = _validate(ctx, fps_file)
     else:
         if not (machine_type and material_code and layer_thickness_mm):
             raise ValueError(
@@ -145,7 +163,7 @@ async def load_form(ctx: Context, file: str) -> dict:
 
     `file` must be an absolute path. Returns the new scene.
     """
-    return await _client(ctx).post("/load-form/", json={"file": file})
+    return await _client(ctx).post("/load-form/", json={"file": _validate(ctx, file)})
 
 
 # ---------------------------------------------------------------------------
@@ -184,7 +202,7 @@ async def import_model(
     """
     client = _client(ctx)
     body: dict[str, Any] = {
-        "file": file,
+        "file": _validate(ctx, file),
         "scale": scale,
         "units": units,
         "repair_behavior": repair_behavior,
@@ -586,11 +604,12 @@ async def get_print_validation(ctx: Context, scene_id: str = "default") -> dict:
 @mcp.tool()
 async def save_form(ctx: Context, file: str, scene_id: str = "default") -> dict:
     """Save the current scene to a .form file at the given absolute path."""
+    safe = _validate(ctx, file)
     result = await _client(ctx).post(
         f"/scene/{scene_id}/save-form/",
-        json={"file": file},
+        json={"file": safe},
     )
-    return result or {"status": "saved", "file": file}
+    return result or {"status": "saved", "file": safe}
 
 
 @mcp.tool()
@@ -602,11 +621,12 @@ async def save_screenshot(
     height: int = 768,
 ) -> dict:
     """Save a PNG screenshot of the scene to the given absolute path."""
+    safe = _validate(ctx, file)
     result = await _client(ctx).post(
         f"/scene/{scene_id}/save-screenshot/",
-        json={"file": file, "width": width, "height": height},
+        json={"file": safe, "width": width, "height": height},
     )
-    return result or {"status": "saved", "file": file}
+    return result or {"status": "saved", "file": safe}
 
 
 # ---------------------------------------------------------------------------
