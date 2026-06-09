@@ -13,6 +13,7 @@ Conventions:
 from __future__ import annotations
 
 import logging
+import math
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -401,11 +402,161 @@ async def add_drain_holes(
 
     `holes` is a list of hole specs; each must include the model_id, position,
     and diameter_mm. Refer to the API docs for the full hole schema.
+
+    For typical "this model has cups and I want them drained" flows, prefer
+    `auto_add_drain_holes` — it sources positions from each model's bounding box
+    so the agent doesn't have to ask the user for XYZ coordinates.
     """
     return await _client(ctx).post(
         f"/scene/{scene_id}/add-drain-holes/",
         json={"holes": holes},
     )
+
+
+def _sample_bottom_positions(
+    min_corner: dict, max_corner: dict, n: int, margin_below_mm: float = 1.0
+) -> list[dict]:
+    """Sample N positions on a grid just below the bottom face of a bounding box.
+
+    Positions sit `margin_below_mm` under z_min so PreForm's surface search
+    starts in empty space and reliably catches the lowest model surface as it
+    scans upward.
+    """
+    x_min, x_max = min_corner.get("x", 0.0), max_corner.get("x", 0.0)
+    y_min, y_max = min_corner.get("y", 0.0), max_corner.get("y", 0.0)
+    z = min_corner.get("z", 0.0) - margin_below_mm
+
+    if n <= 1:
+        return [{"x": (x_min + x_max) / 2, "y": (y_min + y_max) / 2, "z": z}]
+
+    cols = math.ceil(math.sqrt(n))
+    rows = math.ceil(n / cols)
+    out: list[dict] = []
+    for r in range(rows):
+        for c in range(cols):
+            if len(out) >= n:
+                break
+            x = x_min + (c + 0.5) * (x_max - x_min) / cols
+            y = y_min + (r + 0.5) * (y_max - y_min) / rows
+            out.append({"x": x, "y": y, "z": z})
+    return out
+
+
+@mcp.tool()
+async def auto_add_drain_holes(
+    ctx: Context,
+    scene_id: str = "default",
+    models: str | list[str] = "ALL",
+    diameter_mm: float = 1.5,
+    max_holes_per_model: int = 4,
+) -> dict:
+    """Automatically place drain holes for any cups reported by print validation.
+
+    Lets the agent resolve resin-cup warnings without prompting the user for XYZ
+    coordinates. Uses each model's bounding box plus PreForm's own
+    `depth_mm=AUTO` + `max_search_distance` to project candidate positions onto
+    the real mesh surface — no client-side mesh analysis needed.
+
+    Workflow:
+      1. Read the scene to get each model's bounding_box.
+      2. Read print validation to get the cup count per model.
+      3. For each model with cups > 0, sample positions on a grid just below the
+         bottom face of the bbox (capped at `max_holes_per_model`).
+      4. Submit holes pointing up (+Z); PreForm snaps each to the nearest interior
+         surface and drills an AUTO-depth bore.
+
+    Models without cups are skipped. The returned per-model summary includes any
+    warnings PreForm raised — most commonly "no surface found within
+    max_search_distance" for parts whose cups are on side faces. That's the
+    signal to fall back to a hand-placed `add_drain_holes` call.
+    """
+    client = _client(ctx)
+    scene = await client.get(f"/scene/{scene_id}/")
+    validation = await client.get(f"/scene/{scene_id}/print-validation/")
+
+    per_model = validation.get("per_model_results") or {}
+    scene_models = {
+        m.get("id"): m for m in (scene.get("models") or []) if m.get("id")
+    }
+
+    if models == "ALL":
+        target_ids = list(scene_models.keys())
+    elif isinstance(models, list):
+        target_ids = list(models)
+    else:
+        target_ids = [models]
+
+    results: list[dict] = []
+    for model_id in target_ids:
+        cups = int((per_model.get(model_id) or {}).get("cups", 0) or 0)
+        if cups <= 0:
+            results.append(
+                {"model_id": model_id, "status": "skipped", "reason": "no cups"}
+            )
+            continue
+
+        model = scene_models.get(model_id)
+        if not model:
+            results.append(
+                {"model_id": model_id, "status": "skipped", "reason": "not in scene"}
+            )
+            continue
+
+        bbox = model.get("bounding_box") or {}
+        mn, mx = bbox.get("min_corner"), bbox.get("max_corner")
+        if not (mn and mx):
+            results.append(
+                {"model_id": model_id, "status": "skipped", "reason": "no bounding_box"}
+            )
+            continue
+
+        n = min(cups, max_holes_per_model)
+        positions = _sample_bottom_positions(mn, mx, n)
+        bbox_height = mx.get("z", 0.0) - mn.get("z", 0.0)
+        search_distance = max(bbox_height + 2.0, 2.0)
+
+        holes = [
+            {
+                "position": p,
+                "orientation": {
+                    "z_direction": [0.0, 0.0, 1.0],
+                    "x_direction": [1.0, 0.0, 0.0],
+                },
+                "diameter_mm": diameter_mm,
+                "depth_mm": "AUTO",
+                "max_search_distance": search_distance,
+                "create_plug": False,
+            }
+            for p in positions
+        ]
+
+        try:
+            response = await client.post(
+                f"/scene/{scene_id}/add-drain-holes/",
+                json={"model_id": model_id, "drain_holes": holes},
+            )
+            results.append(
+                {
+                    "model_id": model_id,
+                    "status": "added",
+                    "cups_detected": cups,
+                    "holes_requested": len(holes),
+                    "warnings": (response or {}).get("warnings") or [],
+                    "infos": (response or {}).get("infos") or [],
+                }
+            )
+        except PreFormError as e:
+            results.append(
+                {
+                    "model_id": model_id,
+                    "status": "error",
+                    "cups_detected": cups,
+                    "error_code": e.code,
+                    "error_message": e.message,
+                }
+            )
+
+    return {"results": results}
 
 
 # ---------------------------------------------------------------------------
