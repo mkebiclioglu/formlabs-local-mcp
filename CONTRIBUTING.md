@@ -1,58 +1,32 @@
 # Contributing
 
-Thanks for your interest! This project is in early alpha — bug reports and
-small PRs are very welcome, larger changes are best discussed first.
+Bug reports and small PRs are welcome. Larger changes are best discussed in an
+issue first.
 
-## Quick setup
-
-```bash
-git clone https://github.com/mkebiclioglu/formlabs-local-mcp.git
-cd formlabs-local-mcp
-python -m venv .venv
-source .venv/bin/activate
-pip install -e ".[dev]"
-pytest
-```
-
-## Running against a real PreFormServer
-
-The unit tests use `respx` to mock the HTTP layer, so they don't need
-PreFormServer. There's also an end-to-end smoke test in `tests/smoke_e2e.py`
-that drives a real PreFormServer:
+## Setup
 
 ```bash
-PREFORM_SERVER_PATH=/path/to/PreFormServer \
-PREFORM_SERVER_PORT=44399 \
-python tests/smoke_e2e.py
+uv sync --extra dev
+uv run pytest
+uv run ruff check . && uv run ruff format --check .
 ```
 
-Override the test STL with `FORMLABS_TEST_STL=/abs/path/to/your.stl`.
+`tests/smoke_e2e.py` exercises a real PreFormServer (auto-detected from
+`/Applications`, or set `PREFORM_SERVER_PATH`). Run it before opening a PR that
+touches request bodies.
 
-## What's helpful
+## Adding a tool
 
-- **Hardware validation.** Several tools (`print_to_printer`, firmware ops,
-  remote/Fleet Control flows) are spec-driven and have never been validated
-  against a real printer. If you have a Formlabs printer and can verify a
-  tool actually does what its docstring claims, that's gold.
-- **OS coverage.** Development and smoke testing happen on macOS.
-  PreFormServer also runs on Windows; reports about Windows quirks are very
-  welcome.
-- **Niche endpoints.** Some Local API endpoints aren't wrapped yet
-  (`label_part`, `scan_to_model`, `detect_thin_walls`, `interferences`,
-  `save_fps_file`, `upload_firmware`). PRs adding any of these with a test
-  are welcome.
+- Check the request and response shapes in the
+  [Local API reference](https://formlabs.com/support/Formlabs-API-downloads-and-release-notes)
+  for the version noted in the README.
+- Any parameter that is a file path must go through `paths.input_path` or
+  `paths.output_path`.
+- Long-running endpoints use `post_async_operation` / `get_async_operation`.
+- Pick the right `ToolAnnotations` constant (`READ_ONLY`, `MUTATING`, `DESTRUCTIVE`).
+- Docstrings are what the model reads. Say when to use the tool and what the
+  surprising defaults are; skip restating parameter names.
 
 ## Style
 
-- Match what's there: type hints, async functions, short docstrings that
-  explain the *why* and the surprising defaults (e.g. `REPAIR` for imports).
-- Don't add comments that just restate the code.
-- New tools go in `src/formlabs_local_mcp/server.py` next to similar ones.
-
-## Questions vs. bug reports
-
-- Open a [Discussion](https://github.com/mkebiclioglu/formlabs-local-mcp/discussions)
-  for questions, "I tried it and...", or design ideas.
-- Open an [Issue](https://github.com/mkebiclioglu/formlabs-local-mcp/issues)
-  for reproducible bugs (with the issue template filled out) or scoped
-  feature requests.
+Type hints, async functions, ruff-formatted, 100 columns.

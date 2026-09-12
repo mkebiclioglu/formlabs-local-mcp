@@ -1,158 +1,244 @@
 """Formlabs Local API MCP server.
 
-Each MCP tool corresponds to one PreFormServer endpoint. Long-running endpoints
-are called with ?async=true and polled internally so each tool call is
-synchronous from the MCP caller's perspective.
+Each tool wraps one PreFormServer endpoint (Local API 0.9.x). Long-running
+endpoints are called with `?async=true` and polled, so every tool call is
+synchronous from the model's point of view and reports progress while it waits.
 
 Conventions:
-- `scene_id` defaults to "default" so simple workflows don't have to track IDs.
-- File path parameters MUST be absolute paths (PreFormServer rejects relative
-  paths, env vars, and URLs — see the API docs).
+- `scene_id` defaults to "default" so simple flows never have to track IDs.
+- Every file path is validated by `formlabs_local_mcp.paths` before it is
+  forwarded: absolute, under an allowed directory, not hidden, right extension.
 """
 
 from __future__ import annotations
 
 import logging
 import math
+import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
 
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.mcpserver import Context, MCPServer
+from mcp.types import ToolAnnotations
 
+from formlabs_local_mcp import __version__
 from formlabs_local_mcp.client import PreFormClient, PreFormError
 from formlabs_local_mcp.config import Config
+from formlabs_local_mcp.paths import (
+    FORM_EXTENSIONS,
+    FPS_EXTENSIONS,
+    IMAGE_EXTENSIONS,
+    MODEL_EXTENSIONS,
+    input_path,
+    output_path,
+)
 from formlabs_local_mcp.preform import PreFormServerProcess
 
 log = logging.getLogger("formlabs_local_mcp")
+
+Models = str | list[str]
+JSON = dict[str, Any]
 
 
 @dataclass
 class AppContext:
     client: PreFormClient
     preform: PreFormServerProcess
+    config: Config
 
 
 @asynccontextmanager
-async def app_lifespan(_server: FastMCP) -> AsyncIterator[AppContext]:
+async def app_lifespan(_server: MCPServer[AppContext]) -> AsyncIterator[AppContext]:
     config = Config.from_env()
+    log.info(
+        "PreFormServer: url=%s path=%s spawn=%s allowed_paths=%s",
+        config.base_url,
+        config.preform_server_path,
+        config.spawn_preform_server,
+        [str(p) for p in config.allowed_paths],
+    )
     preform = PreFormServerProcess(config)
     await preform.ensure_running()
     client = PreFormClient(config)
     try:
-        yield AppContext(client=client, preform=preform)
+        yield AppContext(client=client, preform=preform, config=config)
     finally:
         await client.close()
         await preform.shutdown()
 
 
-mcp = FastMCP(
-    "formlabs-local",
+mcp: MCPServer[AppContext] = MCPServer(
+    "formlabs",
+    version=__version__,
     instructions=(
-        "Drives a local Formlabs PreFormServer for 3D print job preparation. "
-        "Typical flow: create_scene → import_model → auto_orient → auto_support → "
-        "estimate_print_time → save_form or print_to_printer. "
-        "All file paths must be absolute."
+        "Prepares and sends 3D print jobs through a local Formlabs PreFormServer. "
+        "Typical flow: create_scene -> import_model -> auto_orient -> auto_support -> "
+        "auto_layout (SLA) or auto_pack (SLS) -> get_print_validation -> "
+        "estimate_print_time -> save_form or print_to_printer. "
+        "File paths must be absolute and live under the user's home directory. "
+        "Always confirm with the user before print_to_printer."
     ),
     lifespan=app_lifespan,
 )
 
+READ_ONLY = ToolAnnotations(read_only_hint=True, destructive_hint=False)
+MUTATING = ToolAnnotations(read_only_hint=False, destructive_hint=False)
+DESTRUCTIVE = ToolAnnotations(read_only_hint=False, destructive_hint=True)
+
+
+def _app(ctx: Context) -> AppContext:
+    return ctx.request_context.lifespan_context
+
 
 def _client(ctx: Context) -> PreFormClient:
-    return ctx.request_context.lifespan_context.client  # type: ignore[attr-defined]
+    return _app(ctx).client
 
 
-async def _report_progress(ctx: Context, fraction: float, label: str) -> None:
-    try:
-        await ctx.report_progress(progress=fraction, total=1.0, message=label)
-    except Exception:
-        # Older MCP clients may not support progress; never let it crash the call.
-        pass
+def _config(ctx: Context) -> Config:
+    return _app(ctx).config
+
+
+def _progress(ctx: Context, label: str):
+    async def report(fraction: float) -> None:
+        try:
+            await ctx.report_progress(progress=fraction, total=1.0, message=label)
+        except Exception:
+            # Clients without progress support must never break a call.
+            pass
+
+    return report
+
+
+def _body(**kwargs: Any) -> JSON:
+    """Build a request body, dropping None values so server defaults apply."""
+    return {k: v for k, v in kwargs.items() if v is not None}
 
 
 # ---------------------------------------------------------------------------
-# Server lifecycle / health
+# Health and account
 # ---------------------------------------------------------------------------
 
-@mcp.tool()
-async def health_check(ctx: Context) -> dict:
-    """Return the PreFormServer API version. Use this to confirm the server is reachable."""
+
+@mcp.tool(annotations=READ_ONLY)
+async def health_check(ctx: Context) -> JSON:
+    """Return the PreFormServer version. Call this first to confirm the server is reachable."""
     return await _client(ctx).get("/")
 
 
+@mcp.tool(annotations=READ_ONLY)
+async def get_user(ctx: Context) -> JSON:
+    """Return the Formlabs account currently logged in (after `login`)."""
+    return await _client(ctx).get("/user/")
+
+
 # ---------------------------------------------------------------------------
-# Scene management
+# Scenes
 # ---------------------------------------------------------------------------
 
-@mcp.tool()
+
+@mcp.tool(annotations=MUTATING)
 async def create_scene(
     ctx: Context,
     machine_type: str | None = None,
     material_code: str | None = None,
+    layer_thickness_mm: float | str | None = None,
     print_setting: str = "DEFAULT",
-    layer_thickness_mm: float | None = None,
     fps_file: str | None = None,
-) -> dict:
-    """Create a new scene with the given printer setup.
+) -> JSON:
+    """Create a new scene for a given printer and material. Returns the scene, including its `id`.
 
-    Provide EITHER (machine_type + material_code + layer_thickness_mm) OR fps_file
-    (absolute path to a .fps print-settings file). Returns the scene including its `id`.
-
-    Use `list_materials` to discover valid machine_type / material_code combinations.
+    Provide EITHER machine_type + material_code + layer_thickness_mm, OR the absolute
+    path of a .fps print-settings file. Use `list_printer_types` and `list_materials`
+    to find valid codes; never guess them. `layer_thickness_mm` may also be "ADAPTIVE"
+    on printers that support it.
     """
-    body: dict[str, Any] = {"print_setting": print_setting}
     if fps_file:
-        body["fps_file"] = fps_file
+        body: JSON = {"fps_file": input_path(fps_file, _config(ctx), FPS_EXTENSIONS)}
     else:
         if not (machine_type and material_code and layer_thickness_mm):
             raise ValueError(
-                "Provide either fps_file or all of machine_type, material_code, layer_thickness_mm"
+                "Provide either fps_file or all of machine_type, material_code and "
+                "layer_thickness_mm."
             )
-        body["machine_type"] = machine_type
-        body["material_code"] = material_code
-        body["layer_thickness_mm"] = layer_thickness_mm
-    return await _client(ctx).post("/scene/", json=body)
+        body = {
+            "machine_type": machine_type,
+            "material_code": material_code,
+            "layer_thickness_mm": layer_thickness_mm,
+            "print_setting": print_setting,
+        }
+    try:
+        return await _client(ctx).post("/scene/", json=body)
+    except PreFormError as exc:
+        if exc.code == "INPUT_ERROR" and not fps_file:
+            raise PreFormError(
+                exc.status,
+                exc.code,
+                f"{exc.message}. The combination machine_type={machine_type} "
+                f"material_code={material_code} layer_thickness_mm={layer_thickness_mm} is not "
+                "offered by PreForm. Call list_materials(machine_type=...) and use one of the "
+                "listed scene_settings exactly.",
+                body=exc.body,
+            ) from exc
+        raise
 
 
-@mcp.tool()
-async def list_scenes(ctx: Context) -> dict:
-    """List all scenes currently cached by PreFormServer."""
+@mcp.tool(annotations=READ_ONLY)
+async def list_scenes(ctx: Context) -> JSON:
+    """List every scene PreFormServer currently holds in memory."""
     return await _client(ctx).get("/scenes/")
 
 
-@mcp.tool()
-async def get_scene(ctx: Context, scene_id: str = "default") -> dict:
-    """Get the full state of a scene including loaded models and print settings."""
+@mcp.tool(annotations=READ_ONLY)
+async def get_scene(ctx: Context, scene_id: str = "default") -> JSON:
+    """Get a scene: models (ids, bounding boxes), print settings, material usage, build volume."""
     return await _client(ctx).get(f"/scene/{scene_id}/")
 
 
-@mcp.tool()
-async def delete_scene(ctx: Context, scene_id: str) -> dict:
-    """Delete a cached scene. Cannot delete the 'default' scene this way — use a fresh create_scene call."""
-    if scene_id == "default":
-        # The API exposes DELETE /scene/default/ separately with different semantics
-        # (it resets, not deletes). Surface that distinction here.
-        result = await _client(ctx).delete("/scene/default/")
-        return result or {"status": "reset"}
+@mcp.tool(annotations=MUTATING)
+async def update_scene(
+    ctx: Context,
+    scene_id: str = "default",
+    machine_type: str | None = None,
+    material_code: str | None = None,
+    layer_thickness_mm: float | str | None = None,
+    print_setting: str | None = None,
+) -> JSON:
+    """Change a scene's printer, material, layer thickness or print setting, keeping its models."""
+    body = _body(
+        machine_type=machine_type,
+        material_code=material_code,
+        layer_thickness_mm=layer_thickness_mm,
+        print_setting=print_setting,
+    )
+    if not body:
+        raise ValueError("Nothing to update.")
+    return await _client(ctx).put(f"/scene/{scene_id}/", json=body)
+
+
+@mcp.tool(annotations=DESTRUCTIVE)
+async def delete_scene(ctx: Context, scene_id: str) -> JSON:
+    """Delete a scene and its models. Deleting "default" resets it to empty."""
     result = await _client(ctx).delete(f"/scene/{scene_id}/")
     return result or {"status": "deleted", "scene_id": scene_id}
 
 
-@mcp.tool()
-async def load_form(ctx: Context, file: str) -> dict:
-    """Load a .form file from disk and create a new scene from it.
-
-    `file` must be an absolute path. Returns the new scene.
-    """
-    return await _client(ctx).post("/load-form/", json={"file": file})
+@mcp.tool(annotations=MUTATING)
+async def load_form(ctx: Context, file: str) -> JSON:
+    """Open an existing .form file as a new scene. `file` must be absolute. Returns the scene."""
+    path = input_path(file, _config(ctx), FORM_EXTENSIONS)
+    return await _client(ctx).post_async_operation(
+        "/load-form/", json={"file": path}, progress_callback=_progress(ctx, "loading .form")
+    )
 
 
 # ---------------------------------------------------------------------------
-# Models within a scene
+# Models
 # ---------------------------------------------------------------------------
 
-@mcp.tool()
+
+@mcp.tool(annotations=MUTATING)
 async def import_model(
     ctx: Context,
     file: str,
@@ -161,375 +247,483 @@ async def import_model(
     scale: float = 1.0,
     units: str = "MILLIMETERS",
     repair_behavior: str = "REPAIR",
-    position: dict | None = None,
-    orientation: dict | None = None,
-) -> dict:
-    """Import an STL/OBJ model into a scene.
+    position: JSON | None = None,
+    orientation: JSON | None = None,
+    split_multi_model_file: bool | None = None,
+) -> JSON:
+    """Import a model file (STL, OBJ, 3MF, STEP) into a scene. Returns the model with its `id`.
 
-    `file` MUST be an absolute path. Returns the imported model's properties
-    including its `id`.
+    `file` must be an absolute path. Defaults that differ from the raw API:
+    - `repair_behavior` is REPAIR (API default ERROR fails on the slightly broken
+      meshes most CAD tools export). Other values: ERROR, IGNORE.
+    - `units` is MILLIMETERS. Use INCHES for inch-based files, or DETECTED to let
+      PreForm guess from the file.
 
-    Defaults that differ from the bare API:
-    - `repair_behavior` defaults to `REPAIR`. The raw API default is
-      `KEEP_AS_IS`, which silently produces an empty scene for STLs exported
-      by many CAD tools (OpenCASCADE, Fusion 360, etc.). Pass `"KEEP_AS_IS"`
-      or `"NONE"` if you need to preserve the original mesh exactly.
-    - `units` defaults to `MILLIMETERS`. Pass `CENTIMETERS`, `INCHES`,
-      `METERS`, or `MICRONS` if your file uses something else.
-
-    Post-import verification: this tool re-reads the scene after the import
-    operation reports SUCCEEDED and raises an error if the model count did
-    not actually increase — defense against the silent-failure mode where
-    the operation succeeds but the mesh fails to load.
+    After the import the tool re-reads the scene and fails with
+    IMPORT_PRODUCED_EMPTY_SCENE if no model was actually added. That error means
+    the file is malformed; do not retry, tell the user.
     """
     client = _client(ctx)
-    body: dict[str, Any] = {
-        "file": file,
-        "scale": scale,
-        "units": units,
-        "repair_behavior": repair_behavior,
-    }
-    if name:
-        body["name"] = name
-    if position:
-        body["position"] = position
-    if orientation:
-        body["orientation"] = orientation
+    path = input_path(file, _config(ctx), MODEL_EXTENSIONS)
+    body = _body(
+        file=path,
+        scale=scale,
+        units=units,
+        repair_behavior=repair_behavior,
+        name=name,
+        position=position,
+        orientation=orientation,
+        split_multi_model_file=split_multi_model_file,
+    )
 
-    # Count models before for the post-condition check.
     try:
-        before_scene = await client.get(f"/scene/{scene_id}/")
-        before_count = len(before_scene.get("models") or [])
+        before = await client.get(f"/scene/{scene_id}/")
+        before_ids = {m.get("id") for m in (before.get("models") or [])}
     except PreFormError:
-        before_count = 0
+        before_ids = set()
 
-    await _report_progress(ctx, 0.0, "importing model")
     result = await client.post_async_operation(
         f"/scene/{scene_id}/import-model/",
         json=body,
-        progress_callback=lambda p: _report_progress(ctx, p, "importing model"),
+        progress_callback=_progress(ctx, "importing model"),
     )
-    await _report_progress(ctx, 1.0, "imported")
 
-    # Defense in depth: confirm the scene actually has more models now.
-    after_scene = await client.get(f"/scene/{scene_id}/")
-    after_models = after_scene.get("models") or []
-    if len(after_models) <= before_count:
+    after = await client.get(f"/scene/{scene_id}/")
+    after_models = after.get("models") or []
+    new_models = [m for m in after_models if m.get("id") not in before_ids]
+    if not new_models:
         raise PreFormError(
             500,
             "IMPORT_PRODUCED_EMPTY_SCENE",
-            (
-                f"PreFormServer reported a successful import of {file} but the scene "
-                f"still contains {len(after_models)} model(s). The STL likely failed "
-                "to parse — try a different repair_behavior, verify the units, or "
-                "open the file in PreForm to diagnose."
-            ),
+            f"PreFormServer accepted {path} but no model appeared in the scene. The file "
+            "probably failed to parse. Open it in PreForm to diagnose; do not retry.",
             body={"scene_id": scene_id, "import_result": result},
         )
-
-    # If the async result lacked the model id (some PreFormServer versions),
-    # fall back to the newly-added model from the scene.
-    if isinstance(result, dict) and not result.get("id"):
-        # The new model is whichever model wasn't there before.
-        before_ids = {m.get("id") for m in (before_scene.get("models") or [])}
-        new_models = [m for m in after_models if m.get("id") not in before_ids]
-        if new_models:
-            return new_models[-1]
-    return result
+    if isinstance(result, dict) and result.get("id"):
+        return result
+    return new_models[-1] if len(new_models) == 1 else {"models": new_models}
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
+async def get_model(ctx: Context, model_id: str, scene_id: str = "default") -> JSON:
+    """Get one model's properties: transform, bounding box, supports, lock state."""
+    return await _client(ctx).get(f"/scene/{scene_id}/models/{model_id}/")
+
+
+@mcp.tool(annotations=MUTATING)
 async def update_model(
     ctx: Context,
     model_id: str,
     scene_id: str = "default",
-    position: dict | None = None,
-    orientation: dict | None = None,
+    name: str | None = None,
+    position: JSON | None = None,
+    orientation: JSON | None = None,
     scale: float | None = None,
-) -> dict:
-    """Update a model's transform (position, orientation, uniform scale)."""
-    body: dict[str, Any] = {}
-    if position is not None:
-        body["position"] = position
-    if orientation is not None:
-        body["orientation"] = orientation
-    if scale is not None:
-        body["scale"] = scale
+    lock: str | None = None,
+) -> JSON:
+    """Move, rotate, rescale, rename or lock a model.
+
+    `position` is {x, y, z} in mm. `orientation` is Euler degrees {x, y, z}.
+    `lock` is FREE, LOCKED_XY_ROTATION_FREE_TRANSLATION, LOCKED_ROTATION_FREE_TRANSLATION
+    or FULLY_LOCKED and controls what auto_pack / auto_layout may change.
+    """
+    body = _body(name=name, position=position, orientation=orientation, scale=scale, lock=lock)
+    if not body:
+        raise ValueError("Nothing to update.")
     return await _client(ctx).post(f"/scene/{scene_id}/models/{model_id}/", json=body)
 
 
-@mcp.tool()
-async def delete_model(ctx: Context, model_id: str, scene_id: str = "default") -> dict:
+@mcp.tool(annotations=MUTATING)
+async def duplicate_model(
+    ctx: Context, model_id: str, count: int = 1, scene_id: str = "default"
+) -> JSON:
+    """Make `count` copies of a model. Returns the scene. Run auto_layout / auto_pack after."""
+    return await _client(ctx).post(
+        f"/scene/{scene_id}/models/{model_id}/duplicate/", json={"count": count}
+    )
+
+
+@mcp.tool(annotations=MUTATING)
+async def replace_model(
+    ctx: Context,
+    model_id: str,
+    file: str,
+    scene_id: str = "default",
+    repair_behavior: str = "REPAIR",
+) -> JSON:
+    """Swap a model's mesh for a new file while keeping its placement and supports.
+
+    Useful when the user re-exports a revised part. `file` must be an absolute path.
+    """
+    path = input_path(file, _config(ctx), MODEL_EXTENSIONS)
+    return await _client(ctx).post(
+        f"/scene/{scene_id}/models/{model_id}/replace/",
+        json={"file": path, "repair_behavior": repair_behavior},
+    )
+
+
+@mcp.tool(annotations=DESTRUCTIVE)
+async def delete_model(ctx: Context, model_id: str, scene_id: str = "default") -> JSON:
     """Remove a model from the scene."""
     result = await _client(ctx).delete(f"/scene/{scene_id}/models/{model_id}/")
     return result or {"status": "deleted", "model_id": model_id}
 
 
 # ---------------------------------------------------------------------------
-# Auto operations (long-running)
+# Preparation (long-running)
 # ---------------------------------------------------------------------------
 
-@mcp.tool()
+
+@mcp.tool(annotations=MUTATING)
 async def auto_orient(
     ctx: Context,
     scene_id: str = "default",
-    models: str | list[str] = "ALL",
-    tilt: float | None = None,
-) -> dict:
-    """Automatically choose orientation to minimize supports.
+    models: Models = "ALL",
+    mode: str | None = None,
+    tilt: int | None = None,
+) -> JSON:
+    """Rotate models to the orientation PreForm judges best for printing.
 
-    `models` is "ALL" or a list of model IDs.
+    `models` is "ALL" or a list of model ids. `mode="DENTAL"` uses the Dental
+    Workspace algorithm; `tilt` (degrees) only applies in DENTAL mode.
     """
-    body: dict[str, Any] = {"models": models}
-    if tilt is not None:
-        body["tilt"] = tilt
+    body = _body(models=models, mode=mode, tilt=tilt)
     return await _client(ctx).post_async_operation(
-        f"/scene/{scene_id}/auto-orient/",
-        json=body,
-        progress_callback=lambda p: _report_progress(ctx, p, "auto-orienting"),
+        f"/scene/{scene_id}/auto-orient/", json=body, progress_callback=_progress(ctx, "orienting")
     )
 
 
-@mcp.tool()
+@mcp.tool(annotations=MUTATING)
 async def auto_support(
     ctx: Context,
     scene_id: str = "default",
-    models: str | list[str] = "ALL",
+    models: Models = "ALL",
     density: float | None = None,
     slope_multiplier: float | None = None,
     only_minima: bool | None = None,
     raft_type: str | None = None,
+    raft_label_enabled: bool | None = None,
+    breakaway_structure_enabled: bool | None = None,
     touchpoint_size_mm: float | None = None,
     internal_supports_enabled: bool | None = None,
-) -> dict:
-    """Generate support structures.
+    raft_thickness_mm: float | None = None,
+    height_above_raft_mm: float | None = None,
+) -> JSON:
+    """Generate support structures. Leave parameters unset to use PreForm's defaults.
 
-    `models` is "ALL" or a list of model IDs. `raft_type` is FULL_RAFT,
-    MINI_RAFT, or MINI_RAFTS_ON_BP.
+    `density` and `slope_multiplier` are unitless factors around 1.0.
+    `raft_type` is FULL_RAFT, MINI_RAFT or MINI_RAFTS_ON_BP.
     """
-    body: dict[str, Any] = {"models": models}
-    for key, value in [
-        ("density", density),
-        ("slope_multiplier", slope_multiplier),
-        ("only_minima", only_minima),
-        ("raft_type", raft_type),
-        ("touchpoint_size_mm", touchpoint_size_mm),
-        ("internal_supports_enabled", internal_supports_enabled),
-    ]:
-        if value is not None:
-            body[key] = value
+    body = _body(
+        models=models,
+        density=density,
+        slope_multiplier=slope_multiplier,
+        only_minima=only_minima,
+        raft_type=raft_type,
+        raft_label_enabled=raft_label_enabled,
+        breakaway_structure_enabled=breakaway_structure_enabled,
+        touchpoint_size_mm=touchpoint_size_mm,
+        internal_supports_enabled=internal_supports_enabled,
+        raft_thickness_mm=raft_thickness_mm,
+        height_above_raft_mm=height_above_raft_mm,
+    )
     return await _client(ctx).post_async_operation(
         f"/scene/{scene_id}/auto-support/",
         json=body,
-        progress_callback=lambda p: _report_progress(ctx, p, "generating supports"),
+        progress_callback=_progress(ctx, "generating supports"),
     )
 
 
-@mcp.tool()
+@mcp.tool(annotations=MUTATING)
 async def auto_layout(
     ctx: Context,
     scene_id: str = "default",
-    models: str | list[str] = "ALL",
-    alignment: str | None = None,
-    spacing_mm: float | None = None,
-) -> dict:
-    """Arrange models on the build platform. SLA printers only (Form 4, Form 3, etc.).
+    models: Models = "ALL",
+    model_spacing_mm: float | None = None,
+    placement_margin_mm: float | None = None,
+    lock_rotation: bool | None = None,
+    allow_overlapping_supports: bool | None = None,
+    mode: str | None = None,
+) -> JSON:
+    """Arrange models on the build platform. SLA printers only (machine types starting with FORM-).
 
-    For SLS printers like the Fuse, use `auto_pack` instead.
+    For SLS printers (Fuse) use `auto_pack`. `mode="DENTAL"` uses the Dental Workspace layout.
     """
-    body: dict[str, Any] = {"models": models}
-    if alignment is not None:
-        body["alignment"] = alignment
-    if spacing_mm is not None:
-        body["spacing_mm"] = spacing_mm
+    body = _body(
+        models=models,
+        model_spacing_mm=model_spacing_mm,
+        placement_margin_mm=placement_margin_mm,
+        lock_rotation=lock_rotation,
+        allow_overlapping_supports=allow_overlapping_supports,
+        mode=mode,
+    )
     return await _client(ctx).post_async_operation(
-        f"/scene/{scene_id}/auto-layout/",
-        json=body,
-        progress_callback=lambda p: _report_progress(ctx, p, "auto-layout"),
+        f"/scene/{scene_id}/auto-layout/", json=body, progress_callback=_progress(ctx, "laying out")
     )
 
 
-@mcp.tool()
+@mcp.tool(annotations=MUTATING)
+async def fill_build_platform(
+    ctx: Context,
+    scene_id: str = "default",
+    models: Models = "ALL",
+    model_spacing_mm: float | None = None,
+    placement_margin_mm: float | None = None,
+) -> JSON:
+    """Duplicate the given models as many times as fit and lay the copies out. SLA only.
+
+    Returns `new_model_ids`. For SLS printers use `fill_build_chamber`.
+    """
+    layout = _body(model_spacing_mm=model_spacing_mm, placement_margin_mm=placement_margin_mm)
+    body = _body(models=models, layout_options=layout or None)
+    return await _client(ctx).post_async_operation(
+        f"/scene/{scene_id}/fill-build-platform/",
+        json=body,
+        progress_callback=_progress(ctx, "filling platform"),
+    )
+
+
+@mcp.tool(annotations=MUTATING)
 async def auto_pack(
     ctx: Context,
     scene_id: str = "default",
-    models: str | list[str] = "ALL",
-    spacing_mm: float | None = None,
-) -> dict:
-    """Pack models into the build volume. SLS printers only (Fuse 1+, Fuse 1).
+    model_spacing_mm: float | None = None,
+    distance_from_wall_mm: float | None = None,
+    packing_mode: str | None = None,
+    seed: int | None = None,
+) -> JSON:
+    """Pack all models into the 3D build chamber. SLS printers only (machine types FS*).
 
-    For SLA printers, use `auto_layout` instead.
+    For SLA printers use `auto_layout`. `packing_mode` is PACK_HEIGHT (minimize build
+    height, faster print) or PACK_VOLUME (tightest packing).
     """
-    body: dict[str, Any] = {"models": models}
-    if spacing_mm is not None:
-        body["spacing_mm"] = spacing_mm
+    body = _body(
+        model_spacing_mm=model_spacing_mm,
+        distance_from_wall_mm=distance_from_wall_mm,
+        packing_mode=packing_mode,
+        seed=seed,
+    )
     return await _client(ctx).post_async_operation(
-        f"/scene/{scene_id}/auto-pack/",
-        json=body,
-        progress_callback=lambda p: _report_progress(ctx, p, "auto-packing"),
+        f"/scene/{scene_id}/auto-pack/", json=body, progress_callback=_progress(ctx, "packing")
     )
 
 
-# ---------------------------------------------------------------------------
-# Model modifications
-# ---------------------------------------------------------------------------
+@mcp.tool(annotations=MUTATING)
+async def fill_build_chamber(
+    ctx: Context,
+    scene_id: str = "default",
+    models: Models = "ALL",
+    fill_to_height_mm: float | None = None,
+    model_spacing_mm: float | None = None,
+    distance_from_wall_mm: float | None = None,
+) -> JSON:
+    """Duplicate the given models until the SLS build chamber is full and pack them. SLS only.
 
-@mcp.tool()
+    Returns `new_model_ids`. Set `fill_to_height_mm` to fill only part of the chamber.
+    """
+    packing = _body(model_spacing_mm=model_spacing_mm, distance_from_wall_mm=distance_from_wall_mm)
+    body = _body(
+        models=models, fill_to_height_mm=fill_to_height_mm, packing_options=packing or None
+    )
+    return await _client(ctx).post_async_operation(
+        f"/scene/{scene_id}/fill-build-chamber/",
+        json=body,
+        progress_callback=_progress(ctx, "filling chamber"),
+    )
+
+
+@mcp.tool(annotations=MUTATING)
+async def pack_and_cage(
+    ctx: Context,
+    models: Models = "ALL",
+    cage_label: str | None = None,
+    packing_type: str | None = None,
+    model_spacing_mm: float | None = None,
+) -> JSON:
+    """Pack models and build a printed cage around them so they stay together after SLS printing.
+
+    SLS only. Acts on the most recently created scene (the API has no scene_id for
+    this endpoint). `packing_type` is PACK_VOLUME (default), PACK_HEIGHT, PACK_NORMAL
+    or PACK_NONE. Returns the updated scene.
+    """
+    body = _body(
+        models=models,
+        cage_label=cage_label,
+        model_spacing_mm=model_spacing_mm,
+        packing_type={"packing_type": packing_type} if packing_type else None,
+    )
+    return await _client(ctx).post("/scene/pack-and-cage/", json=body)
+
+
+@mcp.tool(annotations=MUTATING)
 async def hollow_model(
     ctx: Context,
     scene_id: str = "default",
-    models: str | list[str] = "ALL",
+    models: Models = "ALL",
     wall_thickness_mm: float | None = None,
-) -> dict:
-    """Hollow the specified models to reduce material usage."""
-    body: dict[str, Any] = {"models": models}
-    if wall_thickness_mm is not None:
-        body["wall_thickness_mm"] = wall_thickness_mm
+    feature_size_mm: float | None = None,
+) -> JSON:
+    """Hollow models to save resin. Follow up with `auto_add_drain_holes` so resin can escape."""
+    body = _body(
+        models=models, wall_thickness_mm=wall_thickness_mm, feature_size_mm=feature_size_mm
+    )
     return await _client(ctx).post_async_operation(
-        f"/scene/{scene_id}/hollow/",
-        json=body,
-        progress_callback=lambda p: _report_progress(ctx, p, "hollowing"),
+        f"/scene/{scene_id}/hollow/", json=body, progress_callback=_progress(ctx, "hollowing")
     )
 
 
-@mcp.tool()
+@mcp.tool(annotations=MUTATING)
+async def label_model(
+    ctx: Context,
+    model_id: str,
+    label: str,
+    position: JSON,
+    font_size_mm: float,
+    depth_mm: float,
+    scene_id: str = "default",
+    orientation: JSON | None = None,
+    application_mode: str = "EMBOSS",
+) -> JSON:
+    """Emboss or engrave text onto a model's surface.
+
+    `position` is the label's centre {x, y, z} in scene mm. `orientation` (Euler
+    degrees {x, y, z}) sets the text direction; +x runs along the text, +z is the
+    surface normal. `application_mode` is EMBOSS or ENGRAVE.
+    """
+    body = _body(
+        model_id=model_id,
+        label=label,
+        position=position,
+        orientation=orientation or {"x": 0, "y": 0, "z": 0},
+        font_size_mm=font_size_mm,
+        depth_mm=depth_mm,
+        application_mode=application_mode,
+    )
+    return await _client(ctx).post_async_operation(
+        f"/scene/{scene_id}/label/", json=body, progress_callback=_progress(ctx, "labelling")
+    )
+
+
+# ---------------------------------------------------------------------------
+# Drain holes
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool(annotations=MUTATING)
 async def add_drain_holes(
     ctx: Context,
-    scene_id: str,
-    holes: list[dict],
-) -> dict:
-    """Add drain holes to hollowed models.
+    model_id: str,
+    drain_holes: list[JSON],
+    scene_id: str = "default",
+) -> JSON:
+    """Add hand-placed drain holes to one model.
 
-    `holes` is a list of hole specs; each must include the model_id, position,
-    and diameter_mm. Refer to the API docs for the full hole schema.
-
-    For typical "this model has cups and I want them drained" flows, prefer
-    `auto_add_drain_holes` — it sources positions from each model's bounding box
-    so the agent doesn't have to ask the user for XYZ coordinates.
+    Each entry in `drain_holes` needs `position` {x,y,z}, `orientation`, `diameter_mm`,
+    `depth_mm` (number or "AUTO") and `create_plug`; `max_search_distance` (mm) lets
+    PreForm snap the hole onto the nearest surface. Prefer `auto_add_drain_holes`
+    unless the user gives coordinates.
     """
     return await _client(ctx).post(
         f"/scene/{scene_id}/add-drain-holes/",
-        json={"holes": holes},
+        json={"model_id": model_id, "drain_holes": drain_holes},
     )
 
 
-def _sample_bottom_positions(
-    min_corner: dict, max_corner: dict, n: int, margin_below_mm: float = 1.0
-) -> list[dict]:
-    """Sample N positions on a grid just below the bottom face of a bounding box.
+def _bare_id(model_id: str) -> str:
+    """PreFormServer reports per-model results keyed by "{uuid}" while scene models use "uuid"."""
+    return model_id.strip("{}")
 
-    Positions sit `margin_below_mm` under z_min so PreForm's surface search
-    starts in empty space and reliably catches the lowest model surface as it
-    scans upward.
+
+def _by_model_id(per_model_results: JSON | None) -> JSON:
+    return {_bare_id(k): v for k, v in (per_model_results or {}).items()}
+
+
+def _sample_bottom_positions(
+    min_corner: JSON, max_corner: JSON, n: int, margin_below_mm: float = 1.0
+) -> list[JSON]:
+    """Grid of N points just under the bottom face of a bounding box.
+
+    Starting slightly below z_min means PreForm's upward surface search hits the
+    lowest surface of the model first.
     """
     x_min, x_max = min_corner.get("x", 0.0), max_corner.get("x", 0.0)
     y_min, y_max = min_corner.get("y", 0.0), max_corner.get("y", 0.0)
     z = min_corner.get("z", 0.0) - margin_below_mm
-
     if n <= 1:
         return [{"x": (x_min + x_max) / 2, "y": (y_min + y_max) / 2, "z": z}]
-
     cols = math.ceil(math.sqrt(n))
     rows = math.ceil(n / cols)
-    out: list[dict] = []
+    out: list[JSON] = []
     for r in range(rows):
         for c in range(cols):
             if len(out) >= n:
                 break
-            x = x_min + (c + 0.5) * (x_max - x_min) / cols
-            y = y_min + (r + 0.5) * (y_max - y_min) / rows
-            out.append({"x": x, "y": y, "z": z})
+            out.append(
+                {
+                    "x": x_min + (c + 0.5) * (x_max - x_min) / cols,
+                    "y": y_min + (r + 0.5) * (y_max - y_min) / rows,
+                    "z": z,
+                }
+            )
     return out
 
 
-@mcp.tool()
+@mcp.tool(annotations=MUTATING)
 async def auto_add_drain_holes(
     ctx: Context,
     scene_id: str = "default",
-    models: str | list[str] = "ALL",
+    models: Models = "ALL",
     diameter_mm: float = 1.5,
     max_holes_per_model: int = 4,
-) -> dict:
-    """Automatically place drain holes for any cups reported by print validation.
+) -> JSON:
+    """Place drain holes automatically on every model that cup detection flags.
 
-    Lets the agent resolve resin-cup warnings without prompting the user for XYZ
-    coordinates. Uses each model's bounding box plus PreForm's own
-    `depth_mm=AUTO` + `max_search_distance` to project candidate positions onto
-    the real mesh surface — no client-side mesh analysis needed.
-
-    Workflow:
-      1. Read the scene to get each model's bounding_box.
-      2. Read print validation to get the cup count per model.
-      3. For each model with cups > 0, sample positions on a grid just below the
-         bottom face of the bbox (capped at `max_holes_per_model`).
-      4. Submit holes pointing up (+Z); PreForm snaps each to the nearest interior
-         surface and drills an AUTO-depth bore.
-
-    Models without cups are skipped. The returned per-model summary includes any
-    warnings PreForm raised — most commonly "no surface found within
-    max_search_distance" for parts whose cups are on side faces. That's the
-    signal to fall back to a hand-placed `add_drain_holes` call.
+    Runs `detect_cups`, then for each model with cups samples points under its
+    bounding box and lets PreForm project them onto the surface (depth AUTO).
+    Models without cups are skipped. If a model's result carries a "no surface
+    found" warning, the cups are on a side face; offer `add_drain_holes` instead.
     """
     client = _client(ctx)
     scene = await client.get(f"/scene/{scene_id}/")
-    validation = await client.get(f"/scene/{scene_id}/print-validation/")
-
-    per_model = validation.get("per_model_results") or {}
-    scene_models = {
-        m.get("id"): m for m in (scene.get("models") or []) if m.get("id")
-    }
+    detection = await client.get_async_operation(
+        f"/scene/{scene_id}/cup-detection/", progress_callback=_progress(ctx, "detecting cups")
+    )
+    per_model = _by_model_id((detection or {}).get("per_model_results"))
+    scene_models = {_bare_id(m["id"]): m for m in (scene.get("models") or []) if m.get("id")}
 
     if models == "ALL":
-        target_ids = list(scene_models.keys())
+        target_ids = list(scene_models)
     elif isinstance(models, list):
         target_ids = list(models)
     else:
         target_ids = [models]
 
-    results: list[dict] = []
-    for model_id in target_ids:
-        cups = int((per_model.get(model_id) or {}).get("cups", 0) or 0)
+    results: list[JSON] = []
+    for model_id in map(_bare_id, target_ids):
+        cups = int((per_model.get(model_id) or {}).get("cup_count") or 0)
         if cups <= 0:
-            results.append(
-                {"model_id": model_id, "status": "skipped", "reason": "no cups"}
-            )
+            results.append({"model_id": model_id, "status": "skipped", "reason": "no cups"})
             continue
-
         model = scene_models.get(model_id)
-        if not model:
-            results.append(
-                {"model_id": model_id, "status": "skipped", "reason": "not in scene"}
-            )
-            continue
-
-        bbox = model.get("bounding_box") or {}
+        bbox = (model or {}).get("bounding_box") or {}
         mn, mx = bbox.get("min_corner"), bbox.get("max_corner")
         if not (mn and mx):
-            results.append(
-                {"model_id": model_id, "status": "skipped", "reason": "no bounding_box"}
-            )
+            results.append({"model_id": model_id, "status": "skipped", "reason": "no bounding box"})
             continue
 
         n = min(cups, max_holes_per_model)
-        positions = _sample_bottom_positions(mn, mx, n)
-        bbox_height = mx.get("z", 0.0) - mn.get("z", 0.0)
-        search_distance = max(bbox_height + 2.0, 2.0)
-
+        height = mx.get("z", 0.0) - mn.get("z", 0.0)
         holes = [
             {
                 "position": p,
-                "orientation": {
-                    "z_direction": [0.0, 0.0, 1.0],
-                    "x_direction": [1.0, 0.0, 0.0],
-                },
+                "orientation": {"z_direction": [0.0, 0.0, 1.0], "x_direction": [1.0, 0.0, 0.0]},
                 "diameter_mm": diameter_mm,
                 "depth_mm": "AUTO",
-                "max_search_distance": search_distance,
+                "max_search_distance": max(height + 2.0, 2.0),
                 "create_plug": False,
             }
-            for p in positions
+            for p in _sample_bottom_positions(mn, mx, n)
         ]
-
         try:
             response = await client.post(
                 f"/scene/{scene_id}/add-drain-holes/",
@@ -545,101 +739,173 @@ async def auto_add_drain_holes(
                     "infos": (response or {}).get("infos") or [],
                 }
             )
-        except PreFormError as e:
+        except PreFormError as exc:
             results.append(
                 {
                     "model_id": model_id,
                     "status": "error",
                     "cups_detected": cups,
-                    "error_code": e.code,
-                    "error_message": e.message,
+                    "error_code": exc.code,
+                    "error_message": exc.message,
                 }
             )
-
     return {"results": results}
 
 
 # ---------------------------------------------------------------------------
-# Validation & estimation
+# Analysis
 # ---------------------------------------------------------------------------
 
-@mcp.tool()
-async def estimate_print_time(ctx: Context, scene_id: str = "default") -> dict:
-    """Estimate print time and material usage for the current scene."""
+
+@mcp.tool(annotations=READ_ONLY)
+async def get_print_validation(ctx: Context, scene_id: str = "default") -> JSON:
+    """Full printability check per model: cups, unsupported_minima, undersupported, has_seamline."""
+    return await _client(ctx).get_async_operation(
+        f"/scene/{scene_id}/print-validation/", progress_callback=_progress(ctx, "validating")
+    )
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def detect_cups(ctx: Context, scene_id: str = "default") -> JSON:
+    """Count resin cups (trapped-resin pockets) per model. Faster than full validation."""
+    return await _client(ctx).get_async_operation(
+        f"/scene/{scene_id}/cup-detection/", progress_callback=_progress(ctx, "detecting cups")
+    )
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def detect_minima(ctx: Context, scene_id: str = "default") -> JSON:
+    """Count unsupported local minima per model (points that would print in mid-air)."""
+    return await _client(ctx).get_async_operation(
+        f"/scene/{scene_id}/minima-detection/", progress_callback=_progress(ctx, "detecting minima")
+    )
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def detect_supportedness(ctx: Context, scene_id: str = "default") -> JSON:
+    """Percentage of each model's surface that is unsupported (PreForm's red shading)."""
+    return await _client(ctx).get_async_operation(
+        f"/scene/{scene_id}/supportedness-detection/",
+        progress_callback=_progress(ctx, "checking supports"),
+    )
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def detect_thin_walls(
+    ctx: Context, threshold_mm: float, scene_id: str = "default", models: Models = "ALL"
+) -> JSON:
+    """Find wall regions thinner than `threshold_mm` per model, with volumes and bounding boxes."""
+    return await _client(ctx).post_async_operation(
+        f"/scene/{scene_id}/thin-wall-detection/",
+        json={"models": models, "threshold_mm": threshold_mm},
+        progress_callback=_progress(ctx, "detecting thin walls"),
+    )
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def get_interferences(
+    ctx: Context, scene_id: str = "default", collision_offset_mm: float | None = None
+) -> JSON | list[Any]:
+    """List pairs of model ids that overlap or sit closer than `collision_offset_mm`."""
+    return await _client(ctx).post(
+        f"/scene/{scene_id}/interferences/", json=_body(collision_offset_mm=collision_offset_mm)
+    )
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def estimate_print_time(ctx: Context, scene_id: str = "default") -> JSON:
+    """Estimate print time (seconds) for the scene. Read material usage from `get_scene`."""
     return await _client(ctx).post_async_operation(
         f"/scene/{scene_id}/estimate-print-time/",
         json={},
-        progress_callback=lambda p: _report_progress(ctx, p, "estimating"),
+        progress_callback=_progress(ctx, "estimating"),
     )
 
 
-@mcp.tool()
-async def get_print_validation(ctx: Context, scene_id: str = "default") -> dict:
-    """Run print validation. Returns errors and warnings that would block or affect printing."""
-    return await _client(ctx).get(f"/scene/{scene_id}/print-validation/")
-
-
 # ---------------------------------------------------------------------------
-# Exporting
+# Export
 # ---------------------------------------------------------------------------
 
-@mcp.tool()
-async def save_form(ctx: Context, file: str, scene_id: str = "default") -> dict:
-    """Save the current scene to a .form file at the given absolute path."""
-    result = await _client(ctx).post(
+
+@mcp.tool(annotations=DESTRUCTIVE)
+async def save_form(ctx: Context, file: str, scene_id: str = "default") -> JSON:
+    """Save the scene as a .form file at an absolute path.
+
+    Overwrites silently, so confirm with the user first if the file already exists.
+    """
+    path = output_path(file, _config(ctx), FORM_EXTENSIONS)
+    result = await _client(ctx).post_async_operation(
         f"/scene/{scene_id}/save-form/",
-        json={"file": file},
+        json={"file": path},
+        progress_callback=_progress(ctx, "saving"),
     )
-    return result or {"status": "saved", "file": file}
+    return result or {"status": "saved", "file": path}
 
 
-@mcp.tool()
+@mcp.tool(annotations=DESTRUCTIVE)
 async def save_screenshot(
     ctx: Context,
     file: str,
     scene_id: str = "default",
-    width: int = 1024,
-    height: int = 768,
-) -> dict:
-    """Save a PNG screenshot of the scene to the given absolute path."""
-    result = await _client(ctx).post(
-        f"/scene/{scene_id}/save-screenshot/",
-        json={"file": file, "width": width, "height": height},
-    )
-    return result or {"status": "saved", "file": file}
+    image_size_px: int = 1024,
+    view_type: str = "ZOOM_ON_MODELS",
+    yaw: float | None = None,
+    pitch: float | None = None,
+) -> JSON:
+    """Render the scene to a .png or .webp at the given absolute path.
 
-
-# ---------------------------------------------------------------------------
-# Devices and printing
-# ---------------------------------------------------------------------------
-
-@mcp.tool()
-async def list_devices(ctx: Context) -> dict:
-    """List devices PreFormServer has discovered so far. Run `discover_devices` first to refresh."""
-    return await _client(ctx).get("/devices/")
-
-
-@mcp.tool()
-async def discover_devices(
-    ctx: Context,
-    timeout_seconds: int = 10,
-    ip_address: str | None = None,
-) -> dict:
-    """Actively scan the local network for Formlabs printers.
-
-    If `ip_address` is given, only that address is probed.
+    `view_type` is ZOOM_ON_MODELS, FULL_BUILD_VOLUME or FULL_PLATFORM_WIDTH.
     """
-    body: dict[str, Any] = {"timeout_seconds": timeout_seconds}
-    if ip_address:
-        body["ip_address"] = ip_address
-    return await _client(ctx).post_async_operation(
-        "/discover-devices/",
+    path = output_path(file, _config(ctx), IMAGE_EXTENSIONS)
+    body = _body(file=path, image_size_px=image_size_px, view_type=view_type, yaw=yaw, pitch=pitch)
+    result = await _client(ctx).post_async_operation(
+        f"/scene/{scene_id}/save-screenshot/",
         json=body,
-        progress_callback=lambda p: _report_progress(ctx, p, "discovering devices"),
+        progress_callback=_progress(ctx, "rendering"),
+    )
+    return result or {"status": "saved", "file": path}
+
+
+@mcp.tool(annotations=DESTRUCTIVE)
+async def save_fps_file(ctx: Context, file: str, scene_id: str = "default") -> JSON:
+    """Export the scene's print settings to a .fps file for reuse with `create_scene`."""
+    path = output_path(file, _config(ctx), FPS_EXTENSIONS)
+    result = await _client(ctx).post(f"/scene/{scene_id}/save-fps-file/", json={"file": path})
+    return result or {"status": "saved", "file": path}
+
+
+# ---------------------------------------------------------------------------
+# Printers
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def list_devices(ctx: Context, can_print: bool | None = None) -> JSON:
+    """List printers PreFormServer has already discovered (run `discover_devices` to refresh).
+
+    Includes Fleet Control queues and Dashboard printers only after `login`.
+    """
+    return await _client(ctx).get("/devices/", params=_body(can_print=can_print))
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def get_device(ctx: Context, device_id: str) -> JSON:
+    """Status of one printer: connection, tank and cartridge material, time remaining."""
+    return await _client(ctx).get(f"/devices/{device_id}/")
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def discover_devices(
+    ctx: Context, timeout_seconds: int = 10, ip_address: str | None = None
+) -> JSON:
+    """Scan the local network for Formlabs printers. Pass `ip_address` to probe one host."""
+    body = _body(timeout_seconds=timeout_seconds, ip_address=ip_address)
+    return await _client(ctx).post_async_operation(
+        "/discover-devices/", json=body, progress_callback=_progress(ctx, "discovering printers")
     )
 
 
-@mcp.tool()
+@mcp.tool(annotations=DESTRUCTIVE)
 async def print_to_printer(
     ctx: Context,
     printer: str,
@@ -647,97 +913,110 @@ async def print_to_printer(
     scene_id: str = "default",
     print_now: bool | None = None,
     find_printer_timeout_seconds: int = 30,
-) -> dict:
-    """Upload the scene to a printer and queue (or start) the print.
+) -> JSON:
+    """Upload the scene to a printer and queue or start it. Confirm with the user first.
 
-    `printer` is the printer serial name, local IP address, or Fleet Control queue ID.
-    Remote printing requires a prior `login` call.
-
-    If `print_now` is None, the server prints immediately when the printer is ready
-    and queues otherwise.
+    `printer` is a printer serial name (e.g. "Fuse-Loud-Otter"), a local IP address,
+    or a Fleet Control queue id (requires `login`). `print_now=True` starts the print
+    immediately if the printer is ready; otherwise the job waits in the queue.
+    Returns `job_id`.
     """
-    body: dict[str, Any] = {
-        "printer": printer,
-        "job_name": job_name,
-        "find_printer_timeout_seconds": find_printer_timeout_seconds,
-    }
-    if print_now is not None:
-        body["print_now"] = print_now
+    body = _body(
+        printer=printer,
+        job_name=job_name,
+        print_now=print_now,
+        find_printer_timeout_seconds=find_printer_timeout_seconds,
+    )
     return await _client(ctx).post_async_operation(
-        f"/scene/{scene_id}/print/",
-        json=body,
-        progress_callback=lambda p: _report_progress(ctx, p, "uploading to printer"),
+        f"/scene/{scene_id}/print/", json=body, progress_callback=_progress(ctx, "uploading job")
     )
 
 
 # ---------------------------------------------------------------------------
-# Materials & auth
+# Materials
 # ---------------------------------------------------------------------------
 
-@mcp.tool()
-async def list_materials(ctx: Context) -> dict:
-    """List every printer type, material, and print setting PreFormServer knows about.
 
-    Returns `{"printer_types": [...]}` where each printer entry contains its
-    `label`, `build_volume_dimensions_mm`, and a `materials` list. Each material
-    has `material_settings` with the exact `machine_type`, `material_code`,
-    `print_setting`, and `layer_thickness_mm` you need to pass to `create_scene`.
+@mcp.tool(annotations=READ_ONLY)
+async def list_materials(ctx: Context, machine_type: str | None = None) -> JSON:
+    """List printers with their materials and print settings.
 
-    NOTE: this endpoint ignores query parameters — you always get the full
-    list. For a smaller summary of just printer codes, use `list_printer_types`.
+    Each material setting's `scene_settings` holds the exact machine_type,
+    material_code, print_setting and layer_thickness_mm to pass to `create_scene`.
+    Pass `machine_type` to keep only one printer family; the list is large.
     """
-    return await _client(ctx).get("/list-materials/")
+    data = await _client(ctx).get("/list-materials/")
+    if not machine_type:
+        return data
+    wanted = machine_type.upper()
+    printers = [
+        p
+        for p in data.get("printer_types") or []
+        if wanted in [m.upper() for m in (p.get("supported_machine_type_ids") or [])]
+    ]
+    return {"printer_types": printers}
 
 
-@mcp.tool()
-async def list_printer_types(ctx: Context) -> list[dict]:
-    """Quick reference for the machine_type codes you can pass to create_scene.
+@mcp.tool(annotations=READ_ONLY)
+async def list_printer_types(ctx: Context) -> list[JSON]:
+    """Short list of printer families with their machine_type codes and build volumes.
 
-    Returns a list of `{machine_type, label, build_volume_dimensions_mm}` —
-    one entry per printer family PreFormServer supports. Use this when the
-    user names a printer ("the Form 4", "the Fuse") to look up the right code.
-
-    Common values for context:
-      - FORM-4-0    Form 4 / 4B (SLA — use auto_layout)
-      - FORM-3-0    Form 3 / 3B / 3+ / 3B+ (SLA — use auto_layout)
-      - FORM-2-0    Form 2 (SLA — use auto_layout)
-      - FS30-1-0    Fuse 1+ 30W (SLS — use auto_pack)
-      - FS-1-0      Fuse 1 (SLS — use auto_pack)
+    Use this to map a printer name the user says ("Form 4", "Fuse 1+") to a
+    machine_type before calling `create_scene`. Codes starting with FORM- are SLA
+    (use auto_layout); codes starting with FS are SLS (use auto_pack).
     """
-    materials = await _client(ctx).get("/list-materials/")
-    printers = materials.get("printer_types") or []
-    out: list[dict] = []
-    for p in printers:
-        # Pick the first material's first setting to surface the machine_type code.
-        codes: set[str] = set()
-        for m in p.get("materials") or []:
-            for s in m.get("material_settings") or []:
-                code = (s.get("scene_settings") or {}).get("machine_type")
-                if code:
-                    codes.add(code)
-        for code in sorted(codes):
-            out.append(
-                {
-                    "machine_type": code,
-                    "label": p.get("label"),
-                    "build_volume_dimensions_mm": p.get("build_volume_dimensions_mm"),
-                }
-            )
+    data = await _client(ctx).get("/list-materials/")
+    out: list[JSON] = []
+    for p in data.get("printer_types") or []:
+        out.append(
+            {
+                "label": p.get("label"),
+                "machine_types": p.get("supported_machine_type_ids") or [],
+                "product_names": p.get("supported_product_names") or [],
+                "build_volume_dimensions_mm": p.get("build_volume_dimensions_mm"),
+                "material_count": len(p.get("materials") or []),
+            }
+        )
     return out
 
 
-@mcp.tool()
-async def login(ctx: Context, username: str, password: str) -> dict:
-    """Log in to Formlabs Web Services. Required for remote printing and Fleet Control."""
-    result = await _client(ctx).post(
-        "/login/",
-        json={"username": username, "password": password},
-    )
-    return result or {"status": "logged_in"}
+# ---------------------------------------------------------------------------
+# Formlabs account
+# ---------------------------------------------------------------------------
 
 
-@mcp.tool()
-async def logout(ctx: Context) -> dict:
+@mcp.tool(annotations=MUTATING)
+async def login(ctx: Context) -> JSON:
+    """Log in to Formlabs Web Services for remote printing, Fleet Control and Dashboard printers.
+
+    Credentials are never passed through the conversation. Set FORMLABS_USERNAME and
+    FORMLABS_PASSWORD (or FORMLABS_ACCESS_TOKEN) in the MCP server's environment and
+    call this tool with no arguments.
+    """
+    cfg = _config(ctx)
+    if not cfg.is_loopback and not cfg.allow_remote_login:
+        raise ValueError(
+            f"Refusing to send credentials to a non-local PreFormServer ({cfg.base_url}) over "
+            "plain HTTP. Set FORMLABS_ALLOW_REMOTE_LOGIN=1 only on a trusted network."
+        )
+    if cfg.web_access_token:
+        body: JSON = {"access_token": cfg.web_access_token}
+    elif cfg.web_username and cfg.web_password:
+        body = {"username": cfg.web_username, "password": cfg.web_password}
+    else:
+        raise ValueError(
+            "No Formlabs credentials configured. Set FORMLABS_USERNAME and FORMLABS_PASSWORD "
+            "(or FORMLABS_ACCESS_TOKEN) in the MCP server environment, then retry. "
+            "Do not ask the user to paste a password into the chat."
+        )
+    await _client(ctx).post("/login/", json=body)
+    # Deliberately drop the returned tokens; the model has no use for them.
+    user = await _client(ctx).get("/user/")
+    return {"status": "logged_in", "username": user.get("username"), "email": user.get("email")}
+
+
+@mcp.tool(annotations=MUTATING)
+async def logout(ctx: Context) -> JSON:
     """Log out of Formlabs Web Services."""
     result = await _client(ctx).post("/logout/", json={})
     return result or {"status": "logged_out"}
@@ -747,13 +1026,14 @@ async def logout(ctx: Context) -> dict:
 # Entry point
 # ---------------------------------------------------------------------------
 
+
 def main() -> None:
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-        stream=__import__("sys").stderr,
+        stream=sys.stderr,
     )
-    mcp.run()
+    mcp.run(transport="stdio")
 
 
 if __name__ == "__main__":
