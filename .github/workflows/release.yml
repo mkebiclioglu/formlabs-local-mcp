@@ -31,4 +31,6 @@ jobs:
           gh release upload "${GITHUB_REF_NAME}" formlabs-local-mcp-*.tgz --clobber
       - name: Publish to npm (trusted publishing; only when configured)
         if: vars.NPM_PUBLISH == 'true'
-        run: npm publish --provenance --access public
+        run: |
+          npm install -g npm@latest   # OIDC trusted publishing needs npm 11.5+
+          npm publish --access public
