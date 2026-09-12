@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import path, { join } from "node:path";
 import { candidatePaths, isLoopback, loadConfig, managedInstallDir, validateRemoteHost } from "../src/config.js";
 import { tmp } from "./helpers.js";
 
@@ -43,7 +43,7 @@ describe("loadConfig", () => {
     mkdirSync(join(home, "a"));
     const cfg = loadConfig({ env: { FORMLABS_ALLOWED_PATHS: `~/a:/tmp` }, home, platform: "darwin", findServer: () => undefined });
     expect(cfg.allowedPaths[0]).toBe(join(home, "a"));
-    expect(cfg.allowedPaths[1]).toBe("/tmp");
+    expect(cfg.allowedPaths[1]).toBe(path.resolve("/tmp")); // drive-prefixed on Windows hosts
   });
 
   it("keeps credentials out of the loggable summary", () => {
@@ -66,7 +66,7 @@ describe("candidatePaths / managedInstallDir", () => {
   it("lists the managed dir first on every platform", () => {
     const home = "/Users/x";
     const mac = candidatePaths("darwin", home, {});
-    expect(mac[0]).toBe(join(managedInstallDir("darwin", home, {}), "PreFormServer.app/Contents/MacOS/PreFormServer"));
+    expect(mac[0]).toBe(path.posix.join(managedInstallDir("darwin", home, {}), "PreFormServer.app/Contents/MacOS/PreFormServer"));
     expect(mac).toContain("/Applications/PreFormServer.app/Contents/MacOS/PreFormServer");
     const win = candidatePaths("win32", "C:\\Users\\x", { LOCALAPPDATA: "C:\\Users\\x\\AppData\\Local", ProgramFiles: "C:\\Program Files" });
     expect(win[0]).toMatch(/PreFormServer\.exe$/);
