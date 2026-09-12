@@ -8,6 +8,7 @@ chat prompt:
 > estimate the print time, then save it as `~/jobs/bracket.form`."
 
 **Docs and the Claude Code plugin:** https://mkebiclioglu.github.io/formlabs-claude-skills/
+
 **See it work:** https://mkebiclioglu.github.io/formlabs-claude-skills/demo.html (a downloaded bracket to a validated Form 4 job in one prompt)
 
 [![A bracket oriented and supported for the Form 4](https://mkebiclioglu.github.io/formlabs-claude-skills/demo/x-end-idler.png)](https://mkebiclioglu.github.io/formlabs-claude-skills/demo.html)
