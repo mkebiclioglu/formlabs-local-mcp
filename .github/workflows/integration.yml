@@ -1,0 +1,57 @@
+name: Integration (real PreFormServer)
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 6 * * 1" # weekly, catches new PreFormServer releases
+
+permissions:
+  contents: read
+
+jobs:
+  install-and-smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Install PreFormServer (downloads from Formlabs, verifies signature)
+        run: node dist/index.js install-preform
+      - run: node dist/index.js doctor
+      - name: Smoke test
+        run: npm run smoke
+
+  wine:
+    name: Linux via Wine (experimental)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Install Wine, Xvfb and osslsigncode
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends wine wine64 xvfb osslsigncode
+          wine --version
+      - name: Install PreFormServer (Windows build, Authenticode checked with osslsigncode)
+        run: node dist/index.js install-preform
+      - run: node dist/index.js doctor
+      - name: Smoke test under Wine
+        env:
+          PREFORM_LAUNCHER: xvfb-run -a wine
+          PREFORM_STARTUP_TIMEOUT: "300"
+        run: npm run smoke

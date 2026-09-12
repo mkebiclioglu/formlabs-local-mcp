@@ -7,84 +7,53 @@ chat prompt:
 > "Import `~/parts/bracket.stl`, orient and support it for the Form 4 in Black V5,
 > estimate the print time, then save it as `~/jobs/bracket.form`."
 
-**Full documentation, including the one-command Claude Code install:**
-https://mkebiclioglu.github.io/formlabs-claude-skills/
-
-## What you need
-
-1. **PreFormServer**, Formlabs' headless PreForm. Download the zip for your OS from
-   the [Formlabs API downloads page](https://formlabs.com/support/Formlabs-API-downloads-and-release-notes),
-   unzip it and drag `PreFormServer.app` into `/Applications` (macOS). The server
-   finds it there automatically and starts and stops it for you.
-2. **uv**, which runs the server without any Python setup:
-   `brew install uv` or `curl -LsSf https://astral.sh/uv/install.sh | sh`
-   (Windows: `winget install astral-sh.uv`).
+**Docs and the Claude Code plugin:** https://mkebiclioglu.github.io/formlabs-claude-skills/
 
 ## Install
 
-### Claude Code (recommended: the plugin)
-
-The [formlabs-claude-skills](https://github.com/mkebiclioglu/formlabs-claude-skills)
-plugin bundles this server plus print-prep skills. Inside Claude Code:
-
-```
-/plugin marketplace add mkebiclioglu/formlabs-claude-skills
-/plugin install formlabs@formlabs-claude-skills
-```
-
-### Claude Code (server only)
+Needs Node.js 20 or newer. Nothing else.
 
 ```bash
-claude mcp add --scope user formlabs -- \
-  uvx --from git+https://github.com/mkebiclioglu/formlabs-local-mcp@v0.2.1 formlabs-local-mcp
+claude mcp add --scope user formlabs -- npx -y https://github.com/mkebiclioglu/formlabs-local-mcp/releases/download/v1.0.0/formlabs-local-mcp-1.0.0.tgz
 ```
 
-### Claude Desktop, Cursor, VS Code and others
-
-Add this to the client's MCP config (`claude_desktop_config.json`, `.cursor/mcp.json`, ...):
+For other MCP clients, put the same command in their config:
 
 ```json
 {
   "mcpServers": {
     "formlabs": {
-      "command": "uvx",
-      "args": [
-        "--from",
-        "git+https://github.com/mkebiclioglu/formlabs-local-mcp@v0.2.1",
-        "formlabs-local-mcp"
-      ]
+      "command": "npx",
+      "args": ["-y", "https://github.com/mkebiclioglu/formlabs-local-mcp/releases/download/v1.0.0/formlabs-local-mcp-1.0.0.tgz"]
     }
   }
 }
 ```
 
-The first start downloads and builds the server (about a minute). Later starts use
-uv's cache.
+Then ask Claude to run `health_check`. If PreFormServer (Formlabs' headless PreForm)
+is not installed yet, the server says so and offers the `install_preform_server`
+tool, which downloads the current release from Formlabs, verifies Formlabs' code
+signature, and installs it into a folder you own. From a shell the same thing is:
 
-## Configuration
+```bash
+npx -y https://github.com/mkebiclioglu/formlabs-local-mcp/releases/download/v1.0.0/formlabs-local-mcp-1.0.0.tgz install-preform
+```
 
-Nothing is required when PreFormServer is in `/Applications`. Everything else is
-an environment variable on the MCP server entry:
+If you already have `PreFormServer.app` in `/Applications`, it is picked up as is.
 
-| Variable | Default | Purpose |
-|---|---|---|
-| `PREFORM_SERVER_PATH` | auto-detected | Path to the PreFormServer executable if it is somewhere unusual. |
-| `PREFORM_SERVER_PORT` | `44388` | Port PreFormServer listens on. |
-| `PREFORM_SERVER_URL` | `http://127.0.0.1:<port>` | Talk to a PreFormServer you run yourself (disables spawning). |
-| `PREFORM_SPAWN` | `1` | Set to `0` to never start PreFormServer, only connect to it. |
-| `PREFORM_STARTUP_TIMEOUT` | `120` | Seconds to wait for PreFormServer to come up. |
-| `PREFORM_POLL_TIMEOUT` | `600` | Max seconds for one long operation (supports, packing, upload). |
-| `PREFORM_TELEMETRY` | `0` | PreFormServer telemetry is off when spawned; set `1` to allow it. |
-| `FORMLABS_ALLOWED_PATHS` | your home directory | Directories the model may read from and write to, separated by `:` (`;` on Windows). |
-| `FORMLABS_ALLOW_HIDDEN_PATHS` | `0` | Allow paths through dot-directories such as `~/.ssh`. |
-| `FORMLABS_USERNAME` / `FORMLABS_PASSWORD` | unset | Formlabs account for `login` (remote printing, Fleet Control). `FORMLABS_ACCESS_TOKEN` works too. |
-| `FORMLABS_ALLOW_REMOTE_LOGIN` | `0` | Permit `login` against a non-loopback `PREFORM_SERVER_URL`. |
+## Commands
+
+| Command | What it does |
+|---|---|
+| `formlabs-local-mcp` | Serve MCP over stdio (what MCP clients run). |
+| `formlabs-local-mcp install-preform` | Download, verify and install the latest PreFormServer. No-op when up to date; `--force` reinstalls. |
+| `formlabs-local-mcp doctor` | Show what is installed, which mode is active, and whether Formlabs has a newer release. |
 
 ## Tools
 
 | Area | Tools |
 |---|---|
-| Health | `health_check`, `get_user` |
+| Setup | `preform_status`, `install_preform_server`, `health_check` |
 | Scenes | `create_scene`, `list_scenes`, `get_scene`, `update_scene`, `delete_scene`, `load_form` |
 | Models | `import_model`, `get_model`, `update_model`, `duplicate_model`, `replace_model`, `delete_model` |
 | Prep | `auto_orient`, `auto_support`, `auto_layout`, `fill_build_platform` (SLA), `auto_pack`, `fill_build_chamber`, `pack_and_cage` (SLS), `hollow_model`, `label_model` |
@@ -93,12 +62,60 @@ an environment variable on the MCP server entry:
 | Export | `save_form`, `save_screenshot`, `save_fps_file` |
 | Printers | `list_devices`, `get_device`, `discover_devices`, `print_to_printer` |
 | Materials | `list_printer_types`, `list_materials` |
-| Account | `login`, `logout` |
+| Account | `login`, `logout`, `get_user` |
 
 Tools carry MCP annotations (`readOnlyHint`, `destructiveHint`) so clients can ask
-for confirmation before `print_to_printer`, `save_form` or any delete.
-
+before `print_to_printer`, `save_form`, `install_preform_server` or any delete.
 Tracks Formlabs Local API **0.9.29** (PreFormServer 3.62.1).
+
+## Configuration
+
+None needed in the common case. Everything is an environment variable on the MCP
+server entry (or in the `env` block of `~/.claude/settings.json` for Claude Code).
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `PREFORM_SERVER_PATH` | auto-detected | PreFormServer executable if it lives somewhere unusual. |
+| `PREFORM_SERVER_PORT` | `44388` | Port PreFormServer listens on (local port of the tunnel in remote mode). |
+| `PREFORM_SERVER_URL` | `http://127.0.0.1:<port>` | Connect to a PreFormServer you run yourself (disables spawning). |
+| `PREFORM_SPAWN` | `1` | `0` never starts PreFormServer, only connects. |
+| `PREFORM_STARTUP_TIMEOUT` | `120` | Seconds to wait for PreFormServer to come up. |
+| `PREFORM_POLL_TIMEOUT` | `600` | Longest one operation (supports, packing, upload) may take. |
+| `PREFORM_TELEMETRY` | `0` | PreFormServer telemetry is off when spawned; `1` allows it. |
+| `PREFORM_LAUNCHER` | `wine` on Linux | Command prefix used to start PreFormServer, e.g. `xvfb-run -a wine`. |
+| `FORMLABS_ALLOWED_PATHS` | home directory | Directories the model may read from and write to. `:`-separated (`;` on Windows). |
+| `FORMLABS_ALLOW_HIDDEN_PATHS` | `0` | Allow paths through dot-directories such as `~/.cache`. |
+| `FORMLABS_USERNAME`, `FORMLABS_PASSWORD` | unset | Formlabs account for `login` (remote printing, Fleet Control). `FORMLABS_ACCESS_TOKEN` works too. |
+| `FORMLABS_ALLOW_REMOTE_LOGIN` | `0` | Permit `login` against a non-loopback `PREFORM_SERVER_URL`. |
+| `PREFORM_REMOTE_HOST` | unset | Run PreFormServer on another machine over ssh (see below). |
+| `PREFORM_REMOTE_PORT` | `22` | ssh port for the remote host. |
+| `PREFORM_REMOTE_SERVER_PATH` | well-known paths | PreFormServer executable on the remote host. |
+| `PREFORM_REMOTE_SPAWN` | `1` | `0` only tunnels to a PreFormServer already running remotely. |
+| `PREFORM_INSTALL_UNVERIFIED` | `0` | Linux only: accept a download whose Authenticode signature cannot be checked (install `osslsigncode` instead). |
+
+## Linux and remote mode
+
+Formlabs ships PreFormServer for macOS and Windows only. Two ways to use it from Linux:
+
+**Remote mode.** Run PreFormServer on any Mac or Windows box on your network and let
+the MCP server on Linux drive it over ssh:
+
+```
+PREFORM_REMOTE_HOST=me@studio-mac.local
+```
+
+One ssh session (keys only, `BatchMode`) forwards a loopback port and starts
+PreFormServer on the remote machine, so it stops when the MCP server does. Input
+files are copied over with `scp` into a per-session staging folder under the remote
+user's home; `.form` files and screenshots are copied back. The remote host needs
+PreFormServer installed (run `install-preform` there) and a POSIX shell over ssh
+(macOS, Linux). For a Windows remote host set `PREFORM_REMOTE_SPAWN=0` and start
+PreFormServer yourself.
+
+**Wine (experimental).** `install-preform` on Linux fetches the Windows build,
+verifies it with `osslsigncode`, and the server launches it with `wine`. Set
+`PREFORM_LAUNCHER="xvfb-run -a wine"` if it needs a display. A weekly CI job runs
+this path; see the Actions tab for whether it currently works.
 
 ## Security
 
@@ -108,33 +125,39 @@ files as you. This server keeps that surface small:
 - **Path guard rails.** Every file path a tool receives must be absolute, resolve
   (symlinks included) to somewhere under `FORMLABS_ALLOWED_PATHS` (default: your
   home directory), avoid hidden directories, and carry the right extension
-  (`.stl`/`.obj`/`.3mf`/`.step` in, `.form`/`.png`/`.fps` out).
+  (models in, `.form`/`.png`/`.webp`/`.fps` out).
+- **Verified installs.** `install_preform_server` only downloads over HTTPS from
+  `downloads.formlabs.com` with Formlabs' release path layout, scans the archive
+  for path traversal before extracting, and checks the code signature before
+  moving anything into place: Developer ID team `KVPE3R79SR` plus notarization on
+  macOS, a valid Authenticode signature from Formlabs on Windows, `osslsigncode` on
+  Linux. A failed check leaves the previous install untouched.
 - **Credentials stay out of the chat.** `login` takes no arguments; it reads
   `FORMLABS_USERNAME` / `FORMLABS_PASSWORD` from the environment and never returns
-  tokens to the model.
-- **Loopback only by default.** `login` refuses to send credentials to a
-  non-loopback PreFormServer.
-- **Short-lived server.** In the default spawn mode PreFormServer runs only while an
-  MCP client is connected and is stopped on exit. Telemetry is disabled.
-- **Pinned dependencies** with upper bounds and Dependabot updates.
+  tokens to the model. It refuses non-loopback servers unless you opt in.
+- **Short-lived server.** PreFormServer runs only while an MCP client is connected
+  and is stopped on exit. Telemetry is disabled.
+- **Remote mode** uses ssh keys only, validates the host string so it can never be
+  parsed as an ssh option, binds the forward to 127.0.0.1, and sanitizes staged
+  file names.
+- **Supply chain.** Two runtime dependencies (`@modelcontextprotocol/server`, `zod`),
+  a lockfile, SHA-pinned GitHub Actions, Dependabot.
 
 One thing this server cannot change: PreFormServer binds to **all network
-interfaces** (`*:44388`), not just loopback, and it has no `--host` option. On a
-shared or untrusted network keep your OS firewall on (macOS: System Settings,
-Network, Firewall) so other machines cannot reach that port.
+interfaces** (`*:44388`) and has no option to bind loopback only. On a shared or
+untrusted network keep your OS firewall on so other machines cannot reach that port.
 
 ## Development
 
 ```bash
 git clone https://github.com/mkebiclioglu/formlabs-local-mcp.git
 cd formlabs-local-mcp
-uv sync --extra dev
-uv run pytest            # unit tests, no PreFormServer needed
-uv run ruff check .
-uv run python tests/smoke_e2e.py   # end-to-end against a real PreFormServer
+npm install
+npm test              # unit tests, no PreFormServer needed
+npm run typecheck && npm run lint
+npm run build
+npm run smoke         # end-to-end against a real PreFormServer
 ```
-
-To run the server by hand: `uv run formlabs-local-mcp` (it speaks MCP over stdio).
 
 ## License
 

@@ -1,0 +1,36 @@
+{
+  "name": "formlabs-local-mcp",
+  "version": "1.0.0",
+  "description": "MCP server for the Formlabs Local API (PreFormServer): prep and print Formlabs jobs from Claude Code and other MCP clients",
+  "type": "module",
+  "license": "MIT",
+  "author": "Mustafa Ebiclioglu",
+  "repository": { "type": "git", "url": "git+https://github.com/mkebiclioglu/formlabs-local-mcp.git" },
+  "homepage": "https://mkebiclioglu.github.io/formlabs-claude-skills/",
+  "bugs": "https://github.com/mkebiclioglu/formlabs-local-mcp/issues",
+  "keywords": ["mcp", "formlabs", "3d-printing", "preform", "claude", "claude-code"],
+  "engines": { "node": ">=20" },
+  "bin": { "formlabs-local-mcp": "dist/index.js" },
+  "files": ["dist", "README.md", "LICENSE"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepack": "npm run build",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src test",
+    "smoke": "node --import tsx scripts/smoke.ts",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "^2.0.0",
+    "zod": "^4.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "eslint": "^9.30.0",
+    "typescript": "^5.7.0",
+    "typescript-eslint": "^8.0.0",
+    "tsx": "^4.19.0",
+    "vitest": "^5.0.0"
+  }
+}
