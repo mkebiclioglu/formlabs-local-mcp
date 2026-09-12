@@ -22,8 +22,21 @@ const run = promisify(execFile);
 
 export const FORMLABS_TEAM_ID = "KVPE3R79SR"; // Developer ID Application: Formlabs Inc.
 export const FORMLABS_BUNDLE_ID = "com.formlabs.PreFormServer";
-/** Leaf subject on Formlabs' Windows Authenticode signature (Microsoft Trusted Signing). */
-export const FORMLABS_WINDOWS_SUBJECT = /CN=Formlabs Inc\.,\s*O=Formlabs Inc\./;
+/**
+ * Leaf subject on Formlabs' Windows Authenticode signature (Microsoft Trusted
+ * Signing). PowerShell and newer osslsigncode print "CN=..., O=..."; older
+ * osslsigncode prints OpenSSL's legacy "/C=US/.../O=.../CN=..." form. Both the
+ * CN and the O must name Formlabs Inc. on the same subject.
+ */
+export function isFormlabsSubject(subject: string): boolean {
+  const hasField = (field: string) => new RegExp(`(^|[,/]\\s*)${field}=Formlabs Inc\\.(\\s*[,/]|$)`).test(subject.trim());
+  return hasField("CN") && hasField("O");
+}
+
+/** True when some "Subject:" line in a verifier's output names Formlabs Inc. */
+export function outputHasFormlabsSubject(output: string): boolean {
+  return output.split("\n").some((line) => /Subject\s*:/.test(line) && isFormlabsSubject(line.replace(/^.*Subject\s*:\s*/, "")));
+}
 /** Microsoft Identity Verification Root CA 2020: the only root accepted for the Linux check. */
 export const MS_ROOT_PEM = fileURLToPath(new URL("../certs/microsoft-identity-verification-root-2020.pem", import.meta.url));
 export const MS_ROOT_FINGERPRINT = "53:67:F2:0C:7A:DE:0E:2B:CA:79:09:15:05:6D:08:6B:72:0C:33:C1:FA:2A:26:61:AC:F7:87:E3:29:2E:12:70";
@@ -250,7 +263,7 @@ export async function verifyWindows(exeDir: string): Promise<void> {
   if (!stdout) throw new Error(`Could not run the Authenticode check (${errors.join("; ")})`);
   const sig = JSON.parse(stdout.trim()) as { Status: string; Subject: string | null };
   if (sig.Status !== "Valid") throw new Error(`Authenticode signature on PreFormServer.exe is ${sig.Status}, expected Valid`);
-  if (!FORMLABS_WINDOWS_SUBJECT.test(sig.Subject ?? "")) throw new Error(`Refusing to install: PreFormServer.exe signed by ${sig.Subject ?? "unknown"}, expected Formlabs Inc.`);
+  if (!isFormlabsSubject(sig.Subject ?? "")) throw new Error(`Refusing to install: PreFormServer.exe signed by ${sig.Subject ?? "unknown"}, expected Formlabs Inc.`);
 }
 
 /** Make sure the bundled root is the one we pinned, so a swapped PEM cannot widen trust. */
@@ -295,7 +308,7 @@ export async function verifyLinux(exeDir: string, cfg: Config, osslsigncode: Oss
     /^Signature verification: ok$/m.test(output) &&
     !/^Signature verification: failed$/m.test(output) &&
     !/^Timestamp Server Signature verification: failed$/m.test(output) &&
-    FORMLABS_WINDOWS_SUBJECT.test(output);
+    outputHasFormlabsSubject(output);
   if (ok) return;
   if (cfg.installUnverified) return;
   const detail = output.trim().split("\n").filter((l) => /verification|Error|error|Failed|not installed|fingerprint/.test(l)).slice(-4).join(" | ");
