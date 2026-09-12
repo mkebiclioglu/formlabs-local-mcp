@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "formlabs-local-mcp"
-version = "0.2.0"
+version = "0.2.1"
 description = "MCP server for the Formlabs Local API (PreFormServer): prep and print Formlabs jobs from Claude Code and other MCP clients"
 readme = "README.md"
 license = { text = "MIT" }

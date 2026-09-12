@@ -36,7 +36,7 @@ plugin bundles this server plus print-prep skills. Inside Claude Code:
 
 ```bash
 claude mcp add --scope user formlabs -- \
-  uvx --from git+https://github.com/mkebiclioglu/formlabs-local-mcp@v0.2.0 formlabs-local-mcp
+  uvx --from git+https://github.com/mkebiclioglu/formlabs-local-mcp@v0.2.1 formlabs-local-mcp
 ```
 
 ### Claude Desktop, Cursor, VS Code and others
@@ -50,7 +50,7 @@ Add this to the client's MCP config (`claude_desktop_config.json`, `.cursor/mcp.
       "command": "uvx",
       "args": [
         "--from",
-        "git+https://github.com/mkebiclioglu/formlabs-local-mcp@v0.2.0",
+        "git+https://github.com/mkebiclioglu/formlabs-local-mcp@v0.2.1",
         "formlabs-local-mcp"
       ]
     }

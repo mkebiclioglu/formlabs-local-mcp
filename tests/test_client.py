@@ -147,3 +147,42 @@ async def test_async_operation_times_out(config) -> None:
         assert exc.value.code == "OPERATION_TIMEOUT"
     finally:
         await client.close()
+
+
+@respx.mock
+async def test_before_first_request_runs_once(config) -> None:
+    respx.get(f"{BASE}/").mock(return_value=httpx.Response(200, json={"version": "x"}))
+    calls = 0
+
+    async def hook() -> None:
+        nonlocal calls
+        calls += 1
+
+    client = PreFormClient(config, before_first_request=hook)
+    try:
+        await client.get("/")
+        await client.get("/")
+        assert calls == 1
+    finally:
+        await client.close()
+
+
+@respx.mock
+async def test_before_first_request_failure_is_retried(config) -> None:
+    respx.get(f"{BASE}/").mock(return_value=httpx.Response(200, json={"version": "x"}))
+    attempts = 0
+
+    async def hook() -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("PreFormServer missing")
+
+    client = PreFormClient(config, before_first_request=hook)
+    try:
+        with pytest.raises(RuntimeError, match="missing"):
+            await client.get("/")
+        assert await client.get("/") == {"version": "x"}
+        assert attempts == 2
+    finally:
+        await client.close()

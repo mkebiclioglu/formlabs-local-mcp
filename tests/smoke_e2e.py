@@ -80,9 +80,9 @@ async def main(stl_arg: str | None) -> int:
 
     workdir = Path(tempfile.mkdtemp(prefix="formlabs-smoke-", dir=Path.home()))
     try:
-        await preform.ensure_running()
+        client = PreFormClient(cfg, before_first_request=preform.ensure_running)
+        await client.ensure_ready()
         check("PreFormServer reachable", True)
-        client = PreFormClient(cfg)
         ctx = Ctx(SimpleNamespace(lifespan_context=server.AppContext(client, preform, cfg)))
         try:
             version = await server.health_check(ctx)

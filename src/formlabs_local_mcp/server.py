@@ -60,8 +60,7 @@ async def app_lifespan(_server: MCPServer[AppContext]) -> AsyncIterator[AppConte
         [str(p) for p in config.allowed_paths],
     )
     preform = PreFormServerProcess(config)
-    await preform.ensure_running()
-    client = PreFormClient(config)
+    client = PreFormClient(config, before_first_request=preform.ensure_running)
     try:
         yield AppContext(client=client, preform=preform, config=config)
     finally:

@@ -31,8 +31,21 @@ class PreFormError(RuntimeError):
 
 
 class PreFormClient:
-    def __init__(self, config: Config):
+    def __init__(
+        self,
+        config: Config,
+        before_first_request: Callable[[], Awaitable[None]] | None = None,
+    ):
+        """`before_first_request` runs once, before the first HTTP call.
+
+        The MCP server uses it to start PreFormServer lazily, so the MCP handshake
+        is instant and a missing PreFormServer surfaces as a tool error the model
+        can explain, instead of a server that fails to start.
+        """
         self._config = config
+        self._before_first_request = before_first_request
+        self._ready = False
+        self._ready_lock = asyncio.Lock()
         # PreFormServer caps blocking calls at ten minutes; give the read a bit more.
         self._client = httpx.AsyncClient(
             base_url=config.base_url,
@@ -42,6 +55,14 @@ class PreFormClient:
     async def close(self) -> None:
         await self._client.aclose()
 
+    async def ensure_ready(self) -> None:
+        if self._ready or self._before_first_request is None:
+            return
+        async with self._ready_lock:
+            if not self._ready:
+                await self._before_first_request()
+                self._ready = True
+
     async def request(
         self,
         method: str,
@@ -50,6 +71,7 @@ class PreFormClient:
         json: Any = None,
         params: dict[str, Any] | None = None,
     ) -> Any:
+        await self.ensure_ready()
         resp = await self._client.request(method, path, json=json, params=params)
         return self._handle(resp)
 
