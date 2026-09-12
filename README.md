@@ -11,10 +11,10 @@ chat prompt:
 
 ## Install
 
-Needs Node.js 20 or newer. Nothing else.
+Needs Node.js 20 or newer. Nothing else. Published on npm as `formlabs-local-mcp`.
 
 ```bash
-claude mcp add --scope user formlabs -- npx -y https://github.com/mkebiclioglu/formlabs-local-mcp/releases/download/v1.0.0/formlabs-local-mcp-1.0.0.tgz
+claude mcp add --scope user formlabs -- npx -y formlabs-local-mcp
 ```
 
 For other MCP clients, put the same command in their config:
@@ -24,7 +24,7 @@ For other MCP clients, put the same command in their config:
   "mcpServers": {
     "formlabs": {
       "command": "npx",
-      "args": ["-y", "https://github.com/mkebiclioglu/formlabs-local-mcp/releases/download/v1.0.0/formlabs-local-mcp-1.0.0.tgz"]
+      "args": ["-y", "formlabs-local-mcp"]
     }
   }
 }
@@ -36,7 +36,7 @@ tool, which downloads the current release from Formlabs, verifies Formlabs' code
 signature, and installs it into a folder you own. From a shell the same thing is:
 
 ```bash
-npx -y https://github.com/mkebiclioglu/formlabs-local-mcp/releases/download/v1.0.0/formlabs-local-mcp-1.0.0.tgz install-preform
+npx -y formlabs-local-mcp install-preform
 ```
 
 If you already have `PreFormServer.app` in `/Applications`, it is picked up as is.
