@@ -27,6 +27,9 @@ jobs:
         run: node dist/index.js install-preform
       - run: node dist/index.js doctor
       - name: Smoke test
+        env:
+          # Hosted Windows runners have no GPU; PreFormServer's renderer can die on save_screenshot there.
+          SMOKE_ALLOW_SCREENSHOT_FAIL: ${{ runner.os == 'Windows' && '1' || '' }}
         run: npm run smoke
 
   wine:
@@ -54,4 +57,5 @@ jobs:
         env:
           PREFORM_LAUNCHER: xvfb-run -a wine
           PREFORM_STARTUP_TIMEOUT: "300"
+          SMOKE_ALLOW_SCREENSHOT_FAIL: "1"
         run: npm run smoke

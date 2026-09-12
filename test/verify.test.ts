@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
 import { checkPinnedRoot, FORMLABS_WINDOWS_SUBJECT, MS_ROOT_PEM, verifyLinux } from "../src/installer.js";
 import { makeConfig, tmp } from "./helpers.js";
 
@@ -34,7 +35,10 @@ describe("verifyLinux", () => {
   it("passes osslsigncode both chains anchored on the pinned root and accepts a good result", async () => {
     let seen: string[] = [];
     await verifyLinux("/x", makeConfig(), async (args) => { seen = args; return { stdout: GOOD, stderr: "" }; });
-    expect(seen).toEqual(["verify", "-in", "/x/PreFormServer.exe", "-CAfile", MS_ROOT_PEM, "-TSA-CAfile", MS_ROOT_PEM]);
+    expect(seen).toEqual(["verify", "-in", path.join("/x", "PreFormServer.exe"), "-CAfile", MS_ROOT_PEM, "-TSA-CAfile", MS_ROOT_PEM]);
+  });
+  it("accepts older osslsigncode output without the trailing Succeeded line", async () => {
+    await expect(verifyLinux("/x", makeConfig(), async () => ({ stdout: GOOD.replace("Succeeded\n", ""), stderr: "" }))).resolves.toBeUndefined();
   });
   it("rejects a failed verification, a wrong subject, and a missing tool", async () => {
     await expect(verifyLinux("/x", makeConfig(), async () => ({ stdout: GOOD.replace("Signature verification: ok", "Signature verification: failed").replace("Succeeded", "Failed"), stderr: "" }))).rejects.toThrow(/Cannot verify/);

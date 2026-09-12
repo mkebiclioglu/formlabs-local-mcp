@@ -63,8 +63,15 @@ async function main(stlArg?: string): Promise<number> {
     await callTool(app, "save_form", { file: form, scene_id: sceneId }, ctx);
     check("save_form", statSync(form).size > 0, form);
     const png = path.join(workdir, "cube.png");
-    await callTool(app, "save_screenshot", { file: png, scene_id: sceneId }, ctx);
-    check("save_screenshot", statSync(png).size > 0, png);
+    try {
+      await callTool(app, "save_screenshot", { file: png, scene_id: sceneId }, ctx);
+      check("save_screenshot", statSync(png).size > 0, png);
+    } catch (err) {
+      // Headless CI runners without a GPU can crash PreFormServer's renderer; that is an
+      // environment limit, not a tool bug, so allow it to be downgraded to a warning there.
+      if (process.env["SMOKE_ALLOW_SCREENSHOT_FAIL"]) console.log(`[WARN] save_screenshot ${(err as Error).message}`);
+      else check("save_screenshot", false, (err as Error).message);
+    }
     const loaded = (await callTool(app, "load_form", { file: form }, ctx)) as { id?: string; models?: unknown[] };
     check("load_form", (loaded.models?.length ?? 0) === 1, `id=${loaded.id}`);
 
