@@ -7,11 +7,11 @@ chat prompt:
 > "Import `~/parts/bracket.stl`, orient and support it for the Form 4 in Black V5,
 > estimate the print time, then save it as `~/jobs/bracket.form`."
 
-**Docs and the Claude Code plugin:** https://mkebiclioglu.github.io/formlabs-claude-skills/
+**See it work:** https://mkebiclioglu.github.io/formlabs-claude-skills/ (a downloaded bracket to a validated Form 4 job in one prompt; spin the result, compare materials)
 
-**See it work:** https://mkebiclioglu.github.io/formlabs-claude-skills/demo.html (a downloaded bracket to a validated Form 4 job in one prompt)
+**Docs and the Claude Code plugin:** https://mkebiclioglu.github.io/formlabs-claude-skills/docs.html
 
-[![A bracket oriented and supported for the Form 4](https://mkebiclioglu.github.io/formlabs-claude-skills/demo/x-end-idler.png)](https://mkebiclioglu.github.io/formlabs-claude-skills/demo.html)
+[![A bracket oriented and supported for the Form 4](https://mkebiclioglu.github.io/formlabs-claude-skills/demo/x-end-idler.png)](https://mkebiclioglu.github.io/formlabs-claude-skills/)
 
 ## Install
 
