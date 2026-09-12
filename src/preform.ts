@@ -31,7 +31,12 @@ export class LocalBackend implements Backend {
 
   async ensureRunning(): Promise<void> {
     const cfg = this.cfg;
-    if (this.proc && this.proc.exitCode === null) return;
+    if (this.proc && this.proc.exitCode === null) {
+      if (await isReachable(cfg.baseUrl)) return;
+      // Alive but not answering (renderer crash on a headless machine, hung listener): replace it.
+      this.log("[preform] PreFormServer is running but not answering; restarting it");
+      await this.shutdown();
+    }
     if (await isReachable(cfg.baseUrl)) {
       this.log(`[preform] already answering at ${cfg.baseUrl}; not starting another`);
       return;
