@@ -100,7 +100,8 @@ class PreFormServerProcess:
     async def _wait_until_reachable(self) -> None:
         cfg = self._config
         url = f"{cfg.base_url}/"
-        deadline = time.monotonic() + 30.0
+        wait = 30.0 if self._proc is not None else 3.0
+        deadline = time.monotonic() + wait
         async with httpx.AsyncClient(timeout=5.0) as client:
             while True:
                 try:
@@ -110,12 +111,19 @@ class PreFormServerProcess:
                 except httpx.HTTPError:
                     pass
                 if time.monotonic() > deadline:
-                    hint = (
-                        "Set PREFORM_SERVER_PATH to the PreFormServer executable so it can be "
-                        "started automatically, or start it yourself first."
-                        if cfg.preform_server_path is None
-                        else "PreFormServer was started but never answered HTTP."
-                    )
+                    if self._proc is not None:
+                        hint = "PreFormServer was started but never answered HTTP."
+                    elif cfg.preform_server_path is None:
+                        hint = (
+                            f"PreFormServer is not installed. Download it from {DOWNLOAD_URL}, "
+                            "put PreFormServer.app in /Applications (macOS) or set "
+                            "PREFORM_SERVER_PATH to the executable, then try again."
+                        )
+                    else:
+                        hint = (
+                            "Spawning is disabled (PREFORM_SPAWN=0 or PREFORM_SERVER_URL set), "
+                            "so start PreFormServer yourself and try again."
+                        )
                     raise RuntimeError(f"PreFormServer at {url} is not reachable. {hint}")
                 await asyncio.sleep(0.5)
 
