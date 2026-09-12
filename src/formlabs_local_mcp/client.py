@@ -1,23 +1,26 @@
 """Thin httpx wrapper around the PreFormServer HTTP API.
 
-Centralizes:
-- Base URL and timeout configuration
-- Error translation (HTTP errors → PreFormError with the server's error code/message)
-- Async operation polling
+Centralizes base URL and timeouts, translates error responses into
+`PreFormError`, and hides the `?async=true` + poll `/operations/{id}/` dance
+behind `post_async_operation` / `get_async_operation`.
 """
 
 from __future__ import annotations
 
 import asyncio
+import time
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import httpx
 
 from formlabs_local_mcp.config import Config
 
+ProgressCallback = Callable[[float], Awaitable[None]]
+
 
 class PreFormError(RuntimeError):
-    """Raised when the PreFormServer returns a non-success response."""
+    """Raised when PreFormServer returns a non-success response."""
 
     def __init__(self, status: int, code: str | None, message: str, body: Any = None):
         self.status = status
@@ -30,7 +33,7 @@ class PreFormError(RuntimeError):
 class PreFormClient:
     def __init__(self, config: Config):
         self._config = config
-        # 10 minute server-side cap on long blocking calls — use slightly more on the client.
+        # PreFormServer caps blocking calls at ten minutes; give the read a bit more.
         self._client = httpx.AsyncClient(
             base_url=config.base_url,
             timeout=httpx.Timeout(connect=10.0, read=620.0, write=60.0, pool=10.0),
@@ -53,12 +56,7 @@ class PreFormClient:
     async def get(self, path: str, params: dict[str, Any] | None = None) -> Any:
         return await self.request("GET", path, params=params)
 
-    async def post(
-        self,
-        path: str,
-        json: Any = None,
-        params: dict[str, Any] | None = None,
-    ) -> Any:
+    async def post(self, path: str, json: Any = None, params: dict[str, Any] | None = None) -> Any:
         return await self.request("POST", path, json=json, params=params)
 
     async def put(self, path: str, json: Any = None) -> Any:
@@ -71,31 +69,40 @@ class PreFormClient:
         self,
         path: str,
         json: Any = None,
-        progress_callback=None,
+        progress_callback: ProgressCallback | None = None,
     ) -> Any:
-        """POST with ?async=true, then poll /operations/{id}/ until done.
+        """POST with ?async=true, then poll until the operation finishes."""
+        return await self._async_operation("POST", path, json, progress_callback)
 
-        Returns the final `result` payload from the operation. Raises
-        PreFormError on FAILED. `progress_callback`, if provided, is awaited
-        with a float in [0.0, 1.0] each time progress changes.
-        """
-        accepted = await self.request("POST", path, json=json, params={"async": "true"})
-        # PreFormServer uses `operationId` (camelCase) in the OperationAcceptedModel.
-        # Older drafts of the spec referenced `operation_id` / `id`; accept all three
-        # to stay forward-compatible.
-        op_id = (
-            accepted.get("operationId")
-            or accepted.get("operation_id")
-            or accepted.get("id")
-        )
+    async def get_async_operation(
+        self,
+        path: str,
+        progress_callback: ProgressCallback | None = None,
+    ) -> Any:
+        """GET with ?async=true (validation endpoints), then poll until done."""
+        return await self._async_operation("GET", path, None, progress_callback)
+
+    async def _async_operation(
+        self,
+        method: str,
+        path: str,
+        json: Any,
+        progress_callback: ProgressCallback | None,
+    ) -> Any:
+        accepted = await self.request(method, path, json=json, params={"async": "true"})
+        op_id = None
+        if isinstance(accepted, dict):
+            op_id = accepted.get("operationId") or accepted.get("operation_id")
         if not op_id:
-            # Server didn't honour async — assume the response IS the result.
+            # Server answered synchronously; the response is the result.
             return accepted
         return await self.poll_operation(op_id, progress_callback=progress_callback)
 
-    async def poll_operation(self, operation_id: str, progress_callback=None) -> Any:
+    async def poll_operation(
+        self, operation_id: str, progress_callback: ProgressCallback | None = None
+    ) -> Any:
         interval = self._config.poll_interval_seconds
-        deadline = asyncio.get_event_loop().time() + self._config.poll_timeout_seconds
+        deadline = time.monotonic() + self._config.poll_timeout_seconds
         last_progress = -1.0
         while True:
             op = await self.get(f"/operations/{operation_id}/")
@@ -113,16 +120,16 @@ class PreFormClient:
             if status == "FAILED":
                 result = op.get("result") or {}
                 err = result.get("error") if isinstance(result, dict) else None
-                code = (err or {}).get("code") if isinstance(err, dict) else None
-                message = (err or {}).get("message", "Operation failed") if isinstance(err, dict) else "Operation failed"
-                raise PreFormError(200, code, message, body=op)
+                code = err.get("code") if isinstance(err, dict) else None
+                message = err.get("message") if isinstance(err, dict) else None
+                raise PreFormError(500, code, message or "Operation failed", body=op)
 
-            if asyncio.get_event_loop().time() > deadline:
+            if time.monotonic() > deadline:
                 raise PreFormError(
                     408,
                     "OPERATION_TIMEOUT",
                     f"Operation {operation_id} did not complete within "
-                    f"{self._config.poll_timeout_seconds}s",
+                    f"{self._config.poll_timeout_seconds:.0f}s",
                 )
             await asyncio.sleep(interval)
 
@@ -134,8 +141,7 @@ class PreFormClient:
             try:
                 return resp.json()
             except ValueError:
-                return resp.content
-        # Translate to PreFormError using the server's ErrorModel shape when available.
+                return resp.text
         code = None
         message = resp.text
         body: Any = None

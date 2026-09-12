@@ -1,3 +1,3 @@
-"""Formlabs Local API MCP server."""
+"""MCP server for the Formlabs Local API (PreFormServer)."""
 
-__version__ = "0.1.1"
+__version__ = "0.2.0"
