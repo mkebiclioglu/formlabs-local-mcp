@@ -44,11 +44,15 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
-      - name: Install Wine, Xvfb and osslsigncode
+      - name: Install WineHQ stable, Xvfb and osslsigncode
         run: |
           sudo dpkg --add-architecture i386
+          sudo mkdir -pm755 /etc/apt/keyrings
+          sudo wget -O /etc/apt/keyrings/winehq-archive.key https://dl.winehq.org/wine-builds/winehq.key
+          sudo wget -NP /etc/apt/sources.list.d/ https://dl.winehq.org/wine-builds/ubuntu/dists/noble/winehq-noble.sources
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends wine wine64 xvfb osslsigncode
+          sudo apt-get install -y --install-recommends winehq-stable
+          sudo apt-get install -y --no-install-recommends xvfb osslsigncode
           wine --version
       - name: Install PreFormServer (Windows build, Authenticode checked with osslsigncode)
         run: node dist/index.js install-preform
