@@ -10,6 +10,8 @@
  */
 
 import { execFile } from "node:child_process";
+import { X509Certificate } from "node:crypto";
+import { fileURLToPath } from "node:url";
 import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -20,6 +22,11 @@ const run = promisify(execFile);
 
 export const FORMLABS_TEAM_ID = "KVPE3R79SR"; // Developer ID Application: Formlabs Inc.
 export const FORMLABS_BUNDLE_ID = "com.formlabs.PreFormServer";
+/** Leaf subject on Formlabs' Windows Authenticode signature (Microsoft Trusted Signing). */
+export const FORMLABS_WINDOWS_SUBJECT = /CN=Formlabs Inc\.,\s*O=Formlabs Inc\./;
+/** Microsoft Identity Verification Root CA 2020: the only root accepted for the Linux check. */
+export const MS_ROOT_PEM = fileURLToPath(new URL("../certs/microsoft-identity-verification-root-2020.pem", import.meta.url));
+export const MS_ROOT_FINGERPRINT = "53:67:F2:0C:7A:DE:0E:2B:CA:79:09:15:05:6D:08:6B:72:0C:33:C1:FA:2A:26:61:AC:F7:87:E3:29:2E:12:70";
 const MAX_DOWNLOAD_BYTES = 1024 * 1024 * 1024;
 
 export interface Release {
@@ -224,27 +231,72 @@ export async function verifyMac(appPath: string): Promise<void> {
 
 export async function verifyWindows(exeDir: string): Promise<void> {
   const exe = path.join(exeDir, "PreFormServer.exe");
-  const script = `$s = Get-AuthenticodeSignature -LiteralPath '${exe.replace(/'/g, "''")}'; ` +
-    `[pscustomobject]@{ Status = $s.Status.ToString(); Subject = $s.SignerCertificate.Subject } | ConvertTo-Json -Compress`;
-  const { stdout } = await run("powershell", ["-NoProfile", "-NonInteractive", "-Command", script]);
-  const sig = JSON.parse(stdout) as { Status: string; Subject: string | null };
+  const script =
+    "Import-Module Microsoft.PowerShell.Security -ErrorAction Stop; " +
+    `$s = Get-AuthenticodeSignature -LiteralPath '${exe.replace(/'/g, "''")}'; ` +
+    "if (-not $s) { throw 'Get-AuthenticodeSignature returned nothing' }; " +
+    "[pscustomobject]@{ Status = [string]$s.Status; Subject = [string]$s.SignerCertificate.Subject } | ConvertTo-Json -Compress";
+  let stdout = "";
+  const errors: string[] = [];
+  // PowerShell 7 (pwsh) first; Windows PowerShell 5.1 second. Both ship the Security module.
+  for (const shell of ["pwsh", "powershell"]) {
+    try {
+      ({ stdout } = await run(shell, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script]));
+      break;
+    } catch (err) {
+      errors.push(`${shell}: ${(err as Error).message.split("\n")[0]}`);
+    }
+  }
+  if (!stdout) throw new Error(`Could not run the Authenticode check (${errors.join("; ")})`);
+  const sig = JSON.parse(stdout.trim()) as { Status: string; Subject: string | null };
   if (sig.Status !== "Valid") throw new Error(`Authenticode signature on PreFormServer.exe is ${sig.Status}, expected Valid`);
-  if (!/Formlabs/i.test(sig.Subject ?? "")) throw new Error(`Refusing to install: PreFormServer.exe signed by ${sig.Subject ?? "unknown"}, expected Formlabs Inc.`);
+  if (!FORMLABS_WINDOWS_SUBJECT.test(sig.Subject ?? "")) throw new Error(`Refusing to install: PreFormServer.exe signed by ${sig.Subject ?? "unknown"}, expected Formlabs Inc.`);
 }
 
-export async function verifyLinux(exeDir: string, cfg: Config): Promise<void> {
-  const exe = path.join(exeDir, "PreFormServer.exe");
+/** Make sure the bundled root is the one we pinned, so a swapped PEM cannot widen trust. */
+export function checkPinnedRoot(pemPath: string = MS_ROOT_PEM): string {
+  const cert = new X509Certificate(readFileSync(pemPath));
+  if (cert.fingerprint256 !== MS_ROOT_FINGERPRINT) throw new Error(`Bundled trust anchor ${pemPath} does not match the pinned fingerprint`);
+  return pemPath;
+}
+
+export interface OsslsigncodeRunner {
+  (args: string[]): Promise<{ stdout: string; stderr: string }>;
+}
+
+const defaultOsslsigncode: OsslsigncodeRunner = async (args) => {
   try {
-    const { stdout } = await run("osslsigncode", ["verify", "-in", exe]);
-    if (!/Signature verification: ok/i.test(stdout)) throw new Error("osslsigncode did not report a valid signature");
-    if (!/Formlabs/i.test(stdout)) throw new Error("signature is not from Formlabs");
-    return;
+    return await run("osslsigncode", args);
   } catch (err) {
-    if (cfg.installUnverified) return;
-    throw new Error(
-      `Cannot verify PreFormServer.exe on Linux (${(err as Error).message}). Install osslsigncode, or set PREFORM_INSTALL_UNVERIFIED=1 to accept the download on the strength of HTTPS to downloads.formlabs.com alone.`,
-    );
+    const e = err as Error & { stdout?: string; stderr?: string; code?: string };
+    if (e.code === "ENOENT") throw new Error("osslsigncode is not installed");
+    return { stdout: e.stdout ?? "", stderr: `${e.stderr ?? ""}\n${e.message}` };
   }
+};
+
+/**
+ * Linux: Authenticode via osslsigncode. Formlabs signs with Microsoft Trusted
+ * Signing, whose leaf certificates live three days, so the check must honour
+ * the countersignature timestamp; both chains are anchored on the pinned
+ * Microsoft root, not the system CA bundle.
+ */
+export async function verifyLinux(exeDir: string, cfg: Config, osslsigncode: OsslsigncodeRunner = defaultOsslsigncode): Promise<void> {
+  const exe = path.join(exeDir, "PreFormServer.exe");
+  let output = "";
+  try {
+    const root = checkPinnedRoot();
+    const r = await osslsigncode(["verify", "-in", exe, "-CAfile", root, "-TSA-CAfile", root]);
+    output = `${r.stdout}\n${r.stderr}`;
+  } catch (err) {
+    output = (err as Error).message;
+  }
+  const ok = /^Signature verification: ok$/m.test(output) && /^Succeeded$/m.test(output) && FORMLABS_WINDOWS_SUBJECT.test(output);
+  if (ok) return;
+  if (cfg.installUnverified) return;
+  const detail = output.trim().split("\n").filter((l) => /verification|Error|error|Failed|not installed|fingerprint/.test(l)).slice(-4).join(" | ");
+  throw new Error(
+    `Cannot verify PreFormServer.exe on Linux (osslsigncode: ${detail || "no output"}). Install osslsigncode (apt/dnf/brew), or set PREFORM_INSTALL_UNVERIFIED=1 to accept the download on the strength of HTTPS to downloads.formlabs.com alone.`,
+  );
 }
 
 function defaultVerify(platform: Platform): (bundle: string, cfg: Config) => Promise<void> {
