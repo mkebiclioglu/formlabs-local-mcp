@@ -14,30 +14,23 @@ body:
     attributes:
       label: How can we reproduce it?
       description: |
-        The exact prompt or sequence of tool calls. If possible, include the STL/OBJ file
+        The exact prompt or sequence of tool calls. If possible, include the model file
         (or a minimal one that reproduces the issue) and which Formlabs printer + material you used.
     validations:
       required: true
-  - type: input
-    id: version
+  - type: textarea
+    id: doctor
     attributes:
-      label: formlabs-local-mcp version
-      description: From `pip show formlabs-local-mcp` or the version line in `pyproject.toml`.
-      placeholder: "0.1.1"
+      label: Output of `npx -y formlabs-local-mcp doctor`
+      description: Paste the whole thing. It shows the server version, PreFormServer version, mode and OS.
+      render: text
     validations:
       required: true
   - type: input
-    id: preform-version
+    id: client
     attributes:
-      label: PreFormServer version
-      description: Returned by the `health_check` tool, e.g. "3.59.1.632".
-    validations:
-      required: false
-  - type: input
-    id: os
-    attributes:
-      label: OS
-      placeholder: "macOS 15.2 / Windows 11 / ..."
+      label: MCP client
+      placeholder: "Claude Code 2.x / Claude Desktop / Cursor / ..."
     validations:
       required: true
   - type: textarea

@@ -8,14 +8,23 @@ chat prompt:
 > estimate the print time, then save it as `~/jobs/bracket.form`."
 
 **Docs and the Claude Code plugin:** https://mkebiclioglu.github.io/formlabs-claude-skills/
+**See it work:** https://mkebiclioglu.github.io/formlabs-claude-skills/demo.html (a downloaded bracket to a validated Form 4 job in one prompt)
+
+[![A bracket oriented and supported for the Form 4](https://mkebiclioglu.github.io/formlabs-claude-skills/demo/x-end-idler.png)](https://mkebiclioglu.github.io/formlabs-claude-skills/demo.html)
 
 ## Install
 
-Needs Node.js 20 or newer. Nothing else. Published on npm as `formlabs-local-mcp`.
+Needs Node.js 20 or newer. Nothing else. Published on npm as
+[`formlabs-local-mcp`](https://www.npmjs.com/package/formlabs-local-mcp) with build
+provenance. Pin the version you tested with:
 
 ```bash
-claude mcp add --scope user formlabs -- npx -y formlabs-local-mcp
+claude mcp add --scope user formlabs -- npx -y formlabs-local-mcp@1.0.4
 ```
+
+Using Claude Code? The [plugin](https://mkebiclioglu.github.io/formlabs-claude-skills/)
+installs this server plus print-prep skills in one line, so you do not need the
+command above.
 
 For other MCP clients, put the same command in their config:
 
@@ -24,7 +33,7 @@ For other MCP clients, put the same command in their config:
   "mcpServers": {
     "formlabs": {
       "command": "npx",
-      "args": ["-y", "formlabs-local-mcp"]
+      "args": ["-y", "formlabs-local-mcp@1.0.4"]
     }
   }
 }
@@ -36,7 +45,7 @@ tool, which downloads the current release from Formlabs, verifies Formlabs' code
 signature, and installs it into a folder you own. From a shell the same thing is:
 
 ```bash
-npx -y formlabs-local-mcp install-preform
+npx -y formlabs-local-mcp@1.0.4 install-preform
 ```
 
 If you already have `PreFormServer.app` in `/Applications`, it is picked up as is.
@@ -144,13 +153,15 @@ files as you. This server keeps that surface small:
   parsed as an ssh option, binds the forward to 127.0.0.1, and sanitizes staged
   file names.
 - **Supply chain.** Two runtime dependencies (`@modelcontextprotocol/server`, `zod`),
-  a lockfile, SHA-pinned GitHub Actions, Dependabot.
+  a lockfile, SHA-pinned GitHub Actions, Dependabot, CodeQL. Releases are published
+  from CI with npm provenance and 2FA-only access, so `npm audit signatures` can
+  check that what you installed came from a tagged commit here.
 
 One thing this server cannot change: PreFormServer binds to **all network
 interfaces** (`*:44388`) and has no option to bind loopback only. On a shared or
 untrusted network keep your OS firewall on so other machines cannot reach that port.
 
-## Development
+## Contributing
 
 ```bash
 git clone https://github.com/mkebiclioglu/formlabs-local-mcp.git
@@ -161,6 +172,11 @@ npm run typecheck && npm run lint
 npm run build
 npm run smoke         # end-to-end against a real PreFormServer
 ```
+
+Issues and PRs are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md) for how to add
+a tool and what CI checks. Questions and "here is what I printed" go in
+[Discussions](https://github.com/mkebiclioglu/formlabs-local-mcp/discussions).
+Security reports: [SECURITY.md](SECURITY.md).
 
 ## License
 

@@ -27,6 +27,9 @@ jobs:
       - run: npm run lint
       - run: npm test
       - run: npm run build
+      - name: README pins the current package version
+        shell: bash
+        run: grep -q "formlabs-local-mcp@$(node -p "require('./package.json').version")" README.md
       - name: Server answers over stdio without PreFormServer
         shell: bash
         run: |
