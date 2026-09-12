@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -73,7 +74,7 @@ def test_remote_url_disables_spawn(monkeypatch, tmp_path) -> None:
 def test_allowed_paths_from_env(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(config_mod, "find_preform_server", lambda: None)
     a, b = tmp_path / "a", tmp_path / "b"
-    monkeypatch.setenv("FORMLABS_ALLOWED_PATHS", f"{a}:{b}")
+    monkeypatch.setenv("FORMLABS_ALLOWED_PATHS", os.pathsep.join([str(a), str(b)]))
     assert Config.from_env().allowed_paths == (a.resolve(), b.resolve())
 
 

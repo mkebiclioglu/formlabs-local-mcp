@@ -32,6 +32,7 @@ def test_input_path_accepts_model_in_allowed_dir(sandbox, tmp_path) -> None:
 
 def test_input_path_expands_tilde(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))  # Windows
     (tmp_path / "a.stl").write_text("")
     cfg = make_config(allowed_paths=(tmp_path.resolve(),))
     assert input_path("~/a.stl", cfg) == str((tmp_path / "a.stl").resolve())
@@ -53,9 +54,10 @@ def test_missing_input_rejected(sandbox, tmp_path) -> None:
         input_path(str(tmp_path / "parts" / "nope.stl"), sandbox)
 
 
-def test_outside_allowed_root_rejected(sandbox) -> None:
+def test_outside_allowed_root_rejected(sandbox, tmp_path) -> None:
+    outside = Path(tmp_path.anchor) / "etc" / "passwd.stl"  # absolute on every OS
     with pytest.raises(PathNotAllowed, match="outside the allowed"):
-        input_path("/etc/passwd.stl", sandbox)
+        input_path(str(outside), sandbox)
 
 
 def test_hidden_directory_rejected(sandbox, tmp_path) -> None:
