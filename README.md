@@ -112,10 +112,13 @@ PreFormServer installed (run `install-preform` there) and a POSIX shell over ssh
 (macOS, Linux). For a Windows remote host set `PREFORM_REMOTE_SPAWN=0` and start
 PreFormServer yourself.
 
-**Wine (experimental).** `install-preform` on Linux fetches the Windows build,
-verifies it with `osslsigncode`, and the server launches it with `wine`. Set
-`PREFORM_LAUNCHER="xvfb-run -a wine"` if it needs a display. A weekly CI job runs
-this path; see the Actions tab for whether it currently works.
+**Wine: not yet.** `install-preform` on Linux fetches the Windows build and
+verifies it with `osslsigncode` (that part works), and the server will launch it
+with `wine`. But PreFormServer calls `DnsStartMulticastQuery` (mDNS printer
+discovery) right after opening its HTTP port, and neither Ubuntu's Wine 9.0 nor
+WineHQ stable 11.0 implements it, so the process aborts before it is ready. A
+weekly CI job keeps trying; when Wine gains that call the job turns green and
+this note goes away. Until then use remote mode.
 
 ## Security
 
