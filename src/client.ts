@@ -39,6 +39,12 @@ export class PreFormClient {
     private readonly beforeFirstRequest?: () => Promise<void>,
   ) {}
 
+  /** Forget readiness so the next request re-runs beforeFirstRequest (used after a connection failure). */
+  reset(): void {
+    this.ready = false;
+    this.readying = undefined;
+  }
+
   async ensureReady(): Promise<void> {
     if (this.ready || !this.beforeFirstRequest) return;
     if (!this.readying) {
@@ -68,7 +74,8 @@ export class PreFormClient {
       }
       resp = await fetch(url, init);
     } catch (err) {
-      throw new PreFormError(0, "CONNECTION_FAILED", `PreFormServer at ${this.config.baseUrl} did not answer: ${(err as Error).message}`);
+      this.reset(); // PreFormServer may have died; the next call restarts it
+      throw new PreFormError(0, "CONNECTION_FAILED", `PreFormServer at ${this.config.baseUrl} did not answer (${(err as Error).message}). It may have crashed; the next call will restart it.`);
     }
     return handle(resp);
   }

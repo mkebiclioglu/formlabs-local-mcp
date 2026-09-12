@@ -86,6 +86,12 @@ export class LocalBackend implements Backend {
       await this.shutdown();
       throw err;
     }
+    proc.once("exit", (code, signal) => {
+      if (this.proc === proc) {
+        this.log(`[preform] PreFormServer exited unexpectedly (code ${code}, signal ${signal}); it will be restarted on the next call`);
+        this.proc = undefined;
+      }
+    });
   }
 
   async shutdown(): Promise<void> {

@@ -290,7 +290,12 @@ export async function verifyLinux(exeDir: string, cfg: Config, osslsigncode: Oss
   } catch (err) {
     output = (err as Error).message;
   }
-  const ok = /^Signature verification: ok$/m.test(output) && /^Succeeded$/m.test(output) && FORMLABS_WINDOWS_SUBJECT.test(output);
+  // Older osslsigncode releases (Ubuntu ships 2.7) do not print the trailing "Succeeded" line.
+  const ok =
+    /^Signature verification: ok$/m.test(output) &&
+    !/^Signature verification: failed$/m.test(output) &&
+    !/^Timestamp Server Signature verification: failed$/m.test(output) &&
+    FORMLABS_WINDOWS_SUBJECT.test(output);
   if (ok) return;
   if (cfg.installUnverified) return;
   const detail = output.trim().split("\n").filter((l) => /verification|Error|error|Failed|not installed|fingerprint/.test(l)).slice(-4).join(" | ");
