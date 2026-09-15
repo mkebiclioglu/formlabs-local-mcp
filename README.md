@@ -58,6 +58,16 @@ If you already have `PreFormServer.app` in `/Applications`, it is picked up as i
 | `formlabs-local-mcp` | Serve MCP over stdio (what MCP clients run). |
 | `formlabs-local-mcp install-preform` | Download, verify and install the latest PreFormServer. No-op when up to date; `--force` reinstalls. |
 | `formlabs-local-mcp doctor` | Show what is installed, which mode is active, and whether Formlabs has a newer release. |
+| `formlabs-local-mcp connect --token fb_conn_…` | Run the [Formbridge](cloud/README.md) connector: link this machine's PreForm to a hosted environment so remote MCP clients can use it, with approvals and an audit log. |
+
+## Hosted version (Formbridge)
+
+`cloud/` contains a managed version of this server: sign up, get a simulated
+Formlabs print farm (no printer needed), create a token and connect Claude Code,
+Codex or Cursor to one https endpoint. `print_to_printer` and other sensitive
+tools wait for your approval in the dashboard, every call is logged, and the
+`connect` command above links a real PreForm machine with the same tool surface.
+See [cloud/README.md](cloud/README.md).
 
 ## Tools
 

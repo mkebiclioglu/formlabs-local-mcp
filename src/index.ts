@@ -5,6 +5,7 @@
  *   formlabs-local-mcp                 serve MCP over stdio (default)
  *   formlabs-local-mcp install-preform download, verify and install PreFormServer
  *   formlabs-local-mcp doctor          report setup status and the latest Formlabs release
+ *   formlabs-local-mcp connect         run the Formbridge connector for a hosted environment
  *   formlabs-local-mcp --version
  */
 
@@ -12,6 +13,7 @@ import { existsSync } from "node:fs";
 import { createApp } from "./app.js";
 import { loadConfig } from "./config.js";
 import { fetchReleases, installedVersion, installPreformServer, chooseRelease } from "./installer.js";
+import { parseConnectArgs, runConnector } from "./connector.js";
 import { serve, VERSION } from "./server.js";
 
 const HELP = `formlabs-local-mcp ${VERSION}
@@ -20,32 +22,35 @@ Usage:
   formlabs-local-mcp                  Serve MCP over stdio (what MCP clients run)
   formlabs-local-mcp install-preform  Download, verify and install PreFormServer
   formlabs-local-mcp doctor           Check the setup and report the latest release
+  formlabs-local-mcp connect --token fb_conn_...  Connect this machine to a Formbridge environment
   formlabs-local-mcp --version
 
 Docs: https://mkebiclioglu.github.io/formlabs-claude-skills/
 `;
 
-export type Command = "serve" | "install-preform" | "doctor" | "version" | "help";
+export type Command = "serve" | "install-preform" | "doctor" | "connect" | "version" | "help";
 
-export function parseArgs(argv: string[]): { command: Command; force: boolean } {
+export function parseArgs(argv: string[]): { command: Command; force: boolean; rest: string[] } {
   const [first, ...rest] = argv;
   const force = rest.includes("--force") || first === "--force";
   switch (first) {
+    case "connect":
+      return { command: "connect", force, rest };
     case undefined:
     case "serve":
-      return { command: "serve", force };
+      return { command: "serve", force, rest };
     case "install-preform":
     case "install":
-      return { command: "install-preform", force };
+      return { command: "install-preform", force, rest };
     case "doctor":
     case "status":
-      return { command: "doctor", force };
+      return { command: "doctor", force, rest };
     case "--version":
     case "-v":
     case "version":
-      return { command: "version", force };
+      return { command: "version", force, rest };
     default:
-      return { command: "help", force };
+      return { command: "help", force, rest };
   }
 }
 
@@ -70,7 +75,7 @@ async function doctor(): Promise<number> {
 }
 
 export async function main(argv = process.argv.slice(2)): Promise<void> {
-  const { command, force } = parseArgs(argv);
+  const { command, force, rest } = parseArgs(argv);
   if (command === "version") {
     console.log(VERSION);
     return;
@@ -89,6 +94,12 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     const result = await installPreformServer(cfg, { force });
     console.log(`${result.status === "installed" ? "Installed" : "Already installed"}: PreFormServer ${result.version}${result.apiVersion ? ` (Local API ${result.apiVersion})` : ""}`);
     console.log(result.executable);
+    return;
+  }
+  if (command === "connect") {
+    const { url, token } = parseConnectArgs(rest);
+    const app = createApp(loadConfig());
+    await runConnector(app, { url, token, version: VERSION });
     return;
   }
   const app = createApp(loadConfig());
