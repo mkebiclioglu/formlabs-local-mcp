@@ -8,14 +8,14 @@
  * cached per process and refreshed before it expires.
  */
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { supabaseAnonKey, supabaseUrl } from "./env";
+import { envVar, supabaseAnonKey, supabaseUrl } from "./env";
 
 let cached: { client: SupabaseClient; expiresAt: number } | undefined;
 let pending: Promise<SupabaseClient> | undefined;
 
 async function signIn(): Promise<SupabaseClient> {
-  const email = process.env["FORMBRIDGE_SERVICE_EMAIL"];
-  const password = process.env["FORMBRIDGE_SERVICE_PASSWORD"];
+  const email = envVar("FORMBRIDGE_SERVICE_EMAIL");
+  const password = envVar("FORMBRIDGE_SERVICE_PASSWORD");
   if (!email || !password) throw new Error("FORMBRIDGE_SERVICE_EMAIL / FORMBRIDGE_SERVICE_PASSWORD are not set");
   const client = createClient(supabaseUrl(), supabaseAnonKey(), {
     auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
