@@ -27,7 +27,7 @@ export interface ConnectorOptions {
 }
 
 export function parseConnectArgs(argv: string[], env: NodeJS.ProcessEnv = process.env): { url: string; token: string } {
-  let url = env["FORMBRIDGE_URL"] ?? "https://formbridge.vercel.app";
+  let url = env["FORMBRIDGE_URL"] ?? "https://formbridge-mcp-kutay-dev.vercel.app";
   let token = env["FORMBRIDGE_TOKEN"] ?? "";
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!;
