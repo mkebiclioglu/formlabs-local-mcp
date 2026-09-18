@@ -11,6 +11,7 @@ import { existsSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { type Backend, isReachable, waitUntilReachable } from "./backend.js";
 import { DOWNLOAD_PAGE, type Config } from "./config.js";
+import { toServerPath } from "./pathmap.js";
 
 export const READY_TOKEN = "READY FOR INPUT";
 
@@ -58,7 +59,12 @@ export class LocalBackend implements Backend {
     const cfg = this.cfg;
     const env: NodeJS.ProcessEnv = { ...process.env };
     if (!cfg.telemetry) env["DISABLE_PREFORMSERVER_TELEMETRY"] = "1";
-    if (cfg.launcher[0] === "wine" || cfg.launcher.includes("wine")) env["WINEDEBUG"] ??= "-all";
+    if (cfg.launcher.some((w) => /(^|[\\/])wine(64)?$/.test(w))) {
+      // Same headless defaults as preform-linux: quiet Wine, no Mono/Gecko prompts, Qt on the bundled software renderer.
+      env["WINEDEBUG"] ??= "-all";
+      env["WINEDLLOVERRIDES"] ??= "mscoree=d;mshtml=d";
+      env["QT_OPENGL"] ??= "software";
+    }
     const argv = [...cfg.launcher, exe, "--port", String(cfg.preformServerPort)];
     this.log(`[preform] starting ${argv.join(" ")}`);
     const proc = spawn(argv[0]!, argv.slice(1), { env, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
@@ -113,10 +119,10 @@ export class LocalBackend implements Backend {
   }
 
   stageInput(localPath: string): Promise<string> {
-    return Promise.resolve(localPath);
+    return Promise.resolve(toServerPath(localPath, this.cfg.pathStyle, this.cfg.pathMap));
   }
   outputPath(localPath: string): Promise<string> {
-    return Promise.resolve(localPath);
+    return Promise.resolve(toServerPath(localPath, this.cfg.pathStyle, this.cfg.pathMap));
   }
   collectOutput(): Promise<void> {
     return Promise.resolve();
