@@ -81,7 +81,8 @@ async function main(stlArg?: string): Promise<number> {
     const devices = (await callTool(app, "list_devices", {}, ctx)) as { devices?: { id?: string; connection_type?: string }[] };
     const virtual = (devices.devices ?? []).filter((d) => d.connection_type === "VIRTUAL").map((d) => d.id);
     check("list_devices", virtual.includes("Form 4"), `${virtual.length} virtual printers`);
-    const job = (await callTool(app, "print_to_printer", { printer: "Form 4", job_name: "smoke", scene_id: sceneId }, ctx)) as { job_id?: string };
+    // The scene from load_form: the original may be gone if the screenshot crashed PreFormServer.
+    const job = (await callTool(app, "print_to_printer", { printer: "Form 4", job_name: "smoke", scene_id: loaded.id ?? sceneId }, ctx)) as { job_id?: string };
     check("print_to_printer (virtual Form 4)", !!job.job_id, `job_id=${job.job_id}`);
 
     const guard = await callTool(app, "import_model", { file: "/etc/hosts.stl", scene_id: sceneId }, ctx).then(() => "accepted", (e: Error) => e.message);
