@@ -76,6 +76,7 @@ export function toServerPath(localPath: string, style: PathStyle, map: PathMappi
   }
   if (style === "wine" && !isWindowsStyle(resolved)) {
     // Wine maps the host root to Z:; forward slashes are fine for the Windows API.
+    // (On a Windows host "resolved" already carries a drive letter and is left alone.)
     return `Z:${resolved.split(path.sep).join("/")}`;
   }
   return resolved;

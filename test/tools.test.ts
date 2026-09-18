@@ -73,7 +73,7 @@ describe("import_model", () => {
 });
 
 describe("Wine path mapping", () => {
-  it("sends Z: paths for inputs and outputs while validating and collecting locally", async () => {
+  it.skipIf(process.platform === "win32")("sends Z: paths for inputs and outputs while validating and collecting locally", async () => {
     let scenes = 0;
     const { app, home, calls } = await appWith({
       "GET /scene/default/": (_r, _b, res) => json(res, 200, { id: "default", models: scenes++ === 0 ? [] : [{ id: "m1" }] }),

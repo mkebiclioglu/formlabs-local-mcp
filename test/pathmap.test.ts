@@ -23,10 +23,11 @@ describe("parsePathMap", () => {
 });
 
 describe("toServerPath", () => {
-  it("leaves native paths alone", () => {
+  const posix = it.skipIf(process.platform === "win32"); // Wine hosts are POSIX; Windows resolves /x to a drive
+  posix("leaves native paths alone", () => {
     expect(toServerPath("/home/me/part.stl", "native", [])).toBe("/home/me/part.stl");
   });
-  it("prefixes Z: for a Wine-hosted PreFormServer on this host", () => {
+  posix("prefixes Z: for a Wine-hosted PreFormServer on this host", () => {
     expect(toServerPath("/home/me/parts/part.stl", "wine", [])).toBe("Z:/home/me/parts/part.stl");
   });
   it("rewrites mounted directories with the longest match, whatever the style", () => {
