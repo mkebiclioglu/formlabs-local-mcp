@@ -20,7 +20,7 @@ Needs Node.js 20 or newer. Nothing else. Published on npm as
 provenance. Pin the version you tested with:
 
 ```bash
-claude mcp add --scope user formlabs -- npx -y formlabs-local-mcp@1.0.4
+claude mcp add --scope user formlabs -- npx -y formlabs-local-mcp@1.0.5
 ```
 
 Using Claude Code? The [plugin](https://mkebiclioglu.github.io/formlabs-claude-skills/)
@@ -34,7 +34,7 @@ For other MCP clients, put the same command in their config:
   "mcpServers": {
     "formlabs": {
       "command": "npx",
-      "args": ["-y", "formlabs-local-mcp@1.0.4"]
+      "args": ["-y", "formlabs-local-mcp@1.0.5"]
     }
   }
 }
@@ -46,7 +46,7 @@ tool, which downloads the current release from Formlabs, verifies Formlabs' code
 signature, and installs it into a folder you own. From a shell the same thing is:
 
 ```bash
-npx -y formlabs-local-mcp@1.0.4 install-preform
+npx -y formlabs-local-mcp@1.0.5 install-preform
 ```
 
 If you already have `PreFormServer.app` in `/Applications`, it is picked up as is.
@@ -76,7 +76,8 @@ If you already have `PreFormServer.app` in `/Applications`, it is picked up as i
 
 Tools carry MCP annotations (`readOnlyHint`, `destructiveHint`) so clients can ask
 before `print_to_printer`, `save_form`, `install_preform_server` or any delete.
-Tracks Formlabs Local API **0.9.29** (PreFormServer 3.62.1).
+Tracks Formlabs Local API **0.9.30** (PreFormServer 3.63.0). The installer picks the Apple Silicon
+build on arm64 Macs and the Intel build elsewhere, falling back to Intel for releases that only ship it.
 
 ## Configuration
 

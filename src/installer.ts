@@ -42,11 +42,14 @@ export const MS_ROOT_PEM = fileURLToPath(new URL("../certs/microsoft-identity-ve
 export const MS_ROOT_FINGERPRINT = "53:67:F2:0C:7A:DE:0E:2B:CA:79:09:15:05:6D:08:6B:72:0C:33:C1:FA:2A:26:61:AC:F7:87:E3:29:2E:12:70";
 const MAX_DOWNLOAD_BYTES = 1024 * 1024 * 1024;
 
+/** Build flavours Formlabs publishes. `mac-arm64` appeared with PreFormServer 3.63.0; older releases only have the Intel `mac` build. */
+export type ReleaseKind = "mac" | "mac-arm64" | "win";
+
 export interface Release {
   version: string;
   apiVersion?: string;
   date?: string;
-  urls: { mac?: string; win?: string };
+  urls: Partial<Record<ReleaseKind, string>>;
 }
 
 export interface InstallResult {
@@ -68,9 +71,11 @@ export interface InstallOptions {
   extract?: "system" | "node";
   log?: (line: string) => void;
   progress?: (fraction: number, message: string) => Promise<void>;
+  /** CPU architecture used to pick the macOS build; defaults to the running process's. */
+  arch?: string;
 }
 
-const RELEASE_PATH = /^\/PreFormServer\/Release\/(\d+\.\d+\.\d+)\/PreForm_Server_(mac|win)_[A-Za-z0-9._-]+\.zip$/;
+const RELEASE_PATH = /^\/PreFormServer\/Release\/(\d+\.\d+\.\d+)\/PreForm_Server_(mac-arm64|mac|win)_[A-Za-z0-9._-]+\.zip$/;
 
 export function validateDownloadUrl(raw: string): URL {
   const url = new URL(raw);
@@ -108,7 +113,7 @@ export function parseDownloadsPage(html: string): Release[] {
       }
       const m = RELEASE_PATH.exec(url.pathname)!;
       const version = m[1]!;
-      const kind = m[2] as "mac" | "win";
+      const kind = m[2] as ReleaseKind;
       release = byVersion.get(version) ?? { version, urls: {} };
       release.urls[kind] = url.toString();
       byVersion.set(version, release);
@@ -122,11 +127,18 @@ export function parseDownloadsPage(html: string): Release[] {
   return [...byVersion.values()].sort((a, b) => compareVersions(b.version, a.version));
 }
 
-export function chooseRelease(releases: Release[], platform: Platform): { release: Release; url: string; kind: "mac" | "win" } {
-  const kind: "mac" | "win" = platform === "darwin" ? "mac" : "win"; // Linux runs the Windows build under Wine
+/**
+ * Pick the newest release that has a build for this machine. On macOS the Apple Silicon build is
+ * preferred on arm64 and the Intel build otherwise; each falls back to the other (Rosetta runs the
+ * Intel build, and releases before 3.63.0 only shipped Intel). Linux runs the Windows build under Wine.
+ */
+export function chooseRelease(releases: Release[], platform: Platform, arch: string = process.arch): { release: Release; url: string; kind: ReleaseKind } {
+  const kinds: ReleaseKind[] = platform === "darwin" ? (arch === "arm64" ? ["mac-arm64", "mac"] : ["mac", "mac-arm64"]) : ["win"];
   for (const release of releases) {
-    const url = release.urls[kind];
-    if (url) return { release, url, kind };
+    for (const kind of kinds) {
+      const url = release.urls[kind];
+      if (url) return { release, url, kind };
+    }
   }
   throw new Error(`No PreFormServer release found for ${platform} on the Formlabs downloads page`);
 }
@@ -331,7 +343,7 @@ export async function installPreformServer(cfg: Config, opts: InstallOptions = {
 
   await progress(0.02, "checking Formlabs downloads");
   const releases = await fetchReleases(opts.downloadsPageUrl);
-  const { release, url } = chooseRelease(releases, cfg.platform);
+  const { release, url } = chooseRelease(releases, cfg.platform, opts.arch);
   const current = readInstallMeta(installDir);
   if (!opts.force && current?.version === release.version && existsSync(executable)) {
     log(`PreFormServer ${release.version} is already installed`);
