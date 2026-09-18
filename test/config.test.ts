@@ -62,6 +62,31 @@ describe("loadConfig", () => {
   });
 });
 
+describe("path style and map", () => {
+  it("defaults to native, and to wine only when spawning through wine", () => {
+    const home = tmp();
+    const exe = join(home, "PreFormServer.exe");
+    writeFileSync(exe, "");
+    expect(loadConfig({ env: {}, home, platform: "darwin", findServer: () => undefined }).pathStyle).toBe("native");
+    const wine = loadConfig({ env: {}, home, platform: "linux", findServer: () => exe });
+    expect(wine.launcher).toEqual(["wine"]);
+    expect(wine.pathStyle).toBe("wine");
+    const url = loadConfig({ env: { PREFORM_SERVER_URL: "http://127.0.0.1:44388" }, home, platform: "linux", findServer: () => exe });
+    expect(url.pathStyle).toBe("native"); // not spawning: the other server's view of paths is unknown
+    const custom = loadConfig({ env: { PREFORM_LAUNCHER: "xvfb-run -a /opt/wine/bin/wine64" }, home, platform: "linux", findServer: () => exe });
+    expect(custom.pathStyle).toBe("wine");
+  });
+  it("honours PREFORM_SERVER_PATH_STYLE and PREFORM_PATH_MAP and shows them in the summary", () => {
+    const home = tmp();
+    mkdirSync(join(home, "jobs"));
+    const cfg = loadConfig({ env: { PREFORM_SERVER_URL: "http://127.0.0.1:44388", PREFORM_SERVER_PATH_STYLE: "wine", PREFORM_PATH_MAP: "~/jobs=Z:/jobs" }, home, platform: "linux", findServer: () => undefined });
+    expect(cfg.pathStyle).toBe("wine");
+    expect(cfg.pathMap).toEqual([{ local: join(home, "jobs"), remote: "Z:/jobs" }]);
+    expect(cfg.summary()).toMatchObject({ pathStyle: "wine", pathMap: [`${join(home, "jobs")}=Z:/jobs`] });
+    expect(() => loadConfig({ env: { PREFORM_SERVER_PATH_STYLE: "dos" }, home, platform: "linux", findServer: () => undefined })).toThrow(/PREFORM_SERVER_PATH_STYLE/);
+  });
+});
+
 describe("candidatePaths / managedInstallDir", () => {
   it("lists the managed dir first on every platform", () => {
     const home = "/Users/x";

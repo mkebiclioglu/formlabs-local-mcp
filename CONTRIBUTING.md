@@ -32,8 +32,8 @@ claude mcp add --scope user formlabs-dev -- node /path/to/formlabs-local-mcp/dis
 
 `npm run smoke` exercises a real PreFormServer (auto-detected, or set
 `PREFORM_SERVER_PATH`). Run it before opening a PR that touches request bodies.
-The "Integration" workflow does the same on macOS and Windows runners, plus the
-Wine experiment on Linux; a maintainer can trigger it from the Actions tab.
+The "Integration" workflow does the same on macOS and Windows runners and on
+Linux under Wine; a maintainer can trigger it from the Actions tab.
 
 ## Pull requests
 

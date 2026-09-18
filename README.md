@@ -20,7 +20,7 @@ Needs Node.js 20 or newer. Nothing else. Published on npm as
 provenance. Pin the version you tested with:
 
 ```bash
-claude mcp add --scope user formlabs -- npx -y formlabs-local-mcp@1.0.5
+claude mcp add --scope user formlabs -- npx -y formlabs-local-mcp@1.0.6
 ```
 
 Using Claude Code? The [plugin](https://mkebiclioglu.github.io/formlabs-claude-skills/)
@@ -34,7 +34,7 @@ For other MCP clients, put the same command in their config:
   "mcpServers": {
     "formlabs": {
       "command": "npx",
-      "args": ["-y", "formlabs-local-mcp@1.0.5"]
+      "args": ["-y", "formlabs-local-mcp@1.0.6"]
     }
   }
 }
@@ -46,7 +46,7 @@ tool, which downloads the current release from Formlabs, verifies Formlabs' code
 signature, and installs it into a folder you own. From a shell the same thing is:
 
 ```bash
-npx -y formlabs-local-mcp@1.0.5 install-preform
+npx -y formlabs-local-mcp@1.0.6 install-preform
 ```
 
 If you already have `PreFormServer.app` in `/Applications`, it is picked up as is.
@@ -94,6 +94,8 @@ server entry (or in the `env` block of `~/.claude/settings.json` for Claude Code
 | `PREFORM_POLL_TIMEOUT` | `600` | Longest one operation (supports, packing, upload) may take. |
 | `PREFORM_TELEMETRY` | `0` | PreFormServer telemetry is off when spawned; `1` allows it. |
 | `PREFORM_LAUNCHER` | `wine` on Linux | Command prefix used to start PreFormServer, e.g. `xvfb-run -a wine`. |
+| `PREFORM_SERVER_PATH_STYLE` | `auto` | `wine` writes file paths as Wine's `Z:/...` view of this host; `native` sends them as-is. Auto: `wine` when this server starts PreFormServer through Wine. |
+| `PREFORM_PATH_MAP` | unset | `local=remote` pairs, comma separated, for a PreFormServer that mounts your directories elsewhere, e.g. `~/jobs=Z:/jobs` for the preform-linux container. |
 | `FORMLABS_ALLOWED_PATHS` | home directory | Directories the model may read from and write to. `:`-separated (`;` on Windows). |
 | `FORMLABS_ALLOW_HIDDEN_PATHS` | `0` | Allow paths through dot-directories such as `~/.cache`. |
 | `FORMLABS_USERNAME`, `FORMLABS_PASSWORD` | unset | Formlabs account for `login` (remote printing, Fleet Control). `FORMLABS_ACCESS_TOKEN` works too. |
@@ -104,9 +106,36 @@ server entry (or in the `env` block of `~/.claude/settings.json` for Claude Code
 | `PREFORM_REMOTE_SPAWN` | `1` | `0` only tunnels to a PreFormServer already running remotely. |
 | `PREFORM_INSTALL_UNVERIFIED` | `0` | Linux only: accept a download whose Authenticode signature cannot be checked (install `osslsigncode` instead). |
 
-## Linux and remote mode
+## Linux
 
-Formlabs ships PreFormServer for macOS and Windows only. Two ways to use it from Linux:
+Formlabs ships PreFormServer for macOS and Windows only. Three ways to use it from Linux,
+in the order most people should try them:
+
+**A container running PreFormServer under Wine (recommended for servers and
+automation).** [preform-linux](https://github.com/mkebiclioglu/preform-linux) packages
+the Windows build with Wine and Xvfb, headless, no GPU, signature-checked at first start,
+with printers reached by IP or through a Formlabs account. Point this server at it:
+
+```
+PREFORM_SERVER_URL=http://127.0.0.1:44388
+PREFORM_SERVER_PATH_STYLE=wine
+PREFORM_PATH_MAP=/home/me/preform-linux/jobs=Z:/jobs
+```
+
+Files under the mapped directory are sent as `Z:/jobs/...`, which is how PreFormServer
+inside the container sees them; everything else works exactly as on macOS.
+
+**Wine on this machine.** `install-preform` fetches the Windows build and verifies its
+Authenticode signature with `osslsigncode`; the server then starts it through `wine`
+with headless defaults (`QT_OPENGL=software`, no Mono/Gecko prompts) and writes file
+paths as `Z:/home/me/...` automatically. Needs Wine **11.5 or newer** from
+[WineHQ](https://wiki.winehq.org/Ubuntu) (distro Wine 9.0 cannot load PreFormServer
+3.63.0) and a display: `PREFORM_LAUNCHER="xvfb-run -a wine"` on a headless box. Wine
+11.13+ runs it as is; 11.5 to 11.12 need preform-linux's small `dnsapi.dll` shim. LAN
+printer discovery by mDNS does not work under Wine; pass a printer's IP to
+`discover_devices` and `print_to_printer` instead, or `login` for Fleet Control. A weekly
+[CI job](https://github.com/mkebiclioglu/formlabs-local-mcp/actions/workflows/integration.yml)
+runs the smoke test this way.
 
 **Remote mode.** Run PreFormServer on any Mac or Windows box on your network and let
 the MCP server on Linux drive it over ssh:
@@ -122,14 +151,6 @@ user's home; `.form` files and screenshots are copied back. The remote host need
 PreFormServer installed (run `install-preform` there) and a POSIX shell over ssh
 (macOS, Linux). For a Windows remote host set `PREFORM_REMOTE_SPAWN=0` and start
 PreFormServer yourself.
-
-**Wine: not yet.** `install-preform` on Linux fetches the Windows build and
-verifies it with `osslsigncode` (that part works), and the server will launch it
-with `wine`. But PreFormServer calls `DnsStartMulticastQuery` (mDNS printer
-discovery) right after opening its HTTP port, and neither Ubuntu's Wine 9.0 nor
-WineHQ stable 11.0 implements it, so the process aborts before it is ready. A
-weekly CI job keeps trying; when Wine gains that call the job turns green and
-this note goes away. Until then use remote mode.
 
 ## Security
 

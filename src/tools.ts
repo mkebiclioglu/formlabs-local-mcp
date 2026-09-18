@@ -100,7 +100,7 @@ tool({
 tool({
   name: "preform_status",
   description:
-    "Report how this MCP server is set up without touching PreFormServer: whether PreFormServer is installed and where, its version, local or remote mode, allowed directories. Use it to diagnose setup problems before health_check.",
+    "Report how this MCP server is set up without touching PreFormServer: whether PreFormServer is installed and where, its version, local or remote mode, allowed directories, and how file paths are rewritten for a Wine-hosted PreFormServer (path_style, path_map). Use it to diagnose setup problems before health_check.",
   annotations: READ_ONLY,
   input: z.object({}),
   async handler(app) {
@@ -116,6 +116,8 @@ tool({
       base_url: cfg.baseUrl,
       spawn: cfg.spawn,
       launcher: cfg.launcher,
+      path_style: cfg.pathStyle,
+      path_map: cfg.pathMap.map((m) => ({ local: m.local, remote: m.remote })),
       remote: cfg.remote ? { host: cfg.remote.host, port: cfg.remote.port, spawn: cfg.remote.spawn } : null,
       allowed_paths: cfg.allowedPaths,
       credentials_configured: !!cfg.credentials,

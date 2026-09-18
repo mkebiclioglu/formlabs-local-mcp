@@ -58,6 +58,11 @@ async function doctor(): Promise<number> {
   console.log(`PreFormServer: ${installed ? `installed at ${exe} (version ${version ?? "unknown"})` : "NOT INSTALLED"}`);
   console.log(`Mode: ${cfg.remote ? `remote via ssh ${cfg.remote.host}` : cfg.spawn ? "local, started on demand" : `connect to ${cfg.baseUrl}`}`);
   console.log(`Allowed paths: ${cfg.allowedPaths.join(", ")}`);
+  const mapped = cfg.pathMap.map((m) => `${m.local} -> ${m.remote}`);
+  console.log(`File paths: ${cfg.pathStyle === "wine" ? "rewritten to Wine's Z: drive" : "sent as-is"}${mapped.length ? `; mapped: ${mapped.join(", ")}` : ""}`);
+  if (cfg.platform === "linux" && !cfg.remote && exe?.toLowerCase().endsWith(".exe")) {
+    console.log(`Linux: PreFormServer is the Windows build, run through ${cfg.launcher.join(" ") || "wine"} (Wine 11.5+ and Xvfb needed; https://github.com/mkebiclioglu/preform-linux packages this as a container)`);
+  }
   console.log(`Formlabs account: ${cfg.credentials ? "configured" : "not configured (only needed for remote printing)"}`);
   try {
     const { release } = chooseRelease(await fetchReleases(), cfg.platform);

@@ -10,6 +10,7 @@
 import { existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
+import { parsePathMap, type PathMapping, type PathStyle } from "./pathmap.js";
 
 export type Platform = "darwin" | "win32" | "linux";
 
@@ -41,6 +42,10 @@ export interface Config {
   spawn: boolean;
   /** Extra command prefix used to launch PreFormServer, e.g. ["wine"] on Linux. */
   launcher: string[];
+  /** How file paths are written for PreFormServer: as-is, or Wine's `Z:/...` view of this host. */
+  pathStyle: PathStyle;
+  /** Directory prefixes rewritten before a path is sent (container mounts). */
+  pathMap: PathMapping[];
   pollIntervalMs: number;
   pollTimeoutMs: number;
   startupTimeoutMs: number;
@@ -202,6 +207,14 @@ export function loadConfig(opts: LoadOptions = {}): Config {
   if (launcherRaw) launcher = launcherRaw.split(/\s+/).filter(Boolean);
   else if (platform === "linux" && preformServerPath?.toLowerCase().endsWith(".exe")) launcher = ["wine"];
 
+  const usesWine = launcher.some((w) => /(^|[\\/])wine(64)?(\.exe)?$/i.test(w));
+  const styleRaw = (env["PREFORM_SERVER_PATH_STYLE"] ?? "auto").trim().toLowerCase();
+  let pathStyle: PathStyle;
+  if (styleRaw === "wine" || styleRaw === "native") pathStyle = styleRaw;
+  else if (styleRaw === "auto" || styleRaw === "") pathStyle = spawn && usesWine ? "wine" : "native";
+  else throw new Error(`PREFORM_SERVER_PATH_STYLE must be auto, native or wine, got ${JSON.stringify(env["PREFORM_SERVER_PATH_STYLE"])}`);
+  const pathMap = parsePathMap(env["PREFORM_PATH_MAP"], home);
+
   const sep = platform === "win32" ? ";" : ":";
   const allowedRaw = env["FORMLABS_ALLOWED_PATHS"];
   const allowedPaths = allowedRaw?.trim()
@@ -227,6 +240,8 @@ export function loadConfig(opts: LoadOptions = {}): Config {
     preformServerPort: port,
     spawn,
     launcher,
+    pathStyle,
+    pathMap,
     pollIntervalMs: envNum(env, "PREFORM_POLL_INTERVAL", 1) * 1000,
     pollTimeoutMs: envNum(env, "PREFORM_POLL_TIMEOUT", 600) * 1000,
     startupTimeoutMs: envNum(env, "PREFORM_STARTUP_TIMEOUT", 120) * 1000,
@@ -244,6 +259,8 @@ export function loadConfig(opts: LoadOptions = {}): Config {
         preformServerPath: this.preformServerPath,
         spawn: this.spawn,
         launcher: this.launcher,
+        pathStyle: this.pathStyle,
+        pathMap: this.pathMap.map((m) => `${m.local}=${m.remote}`),
         allowedPaths: this.allowedPaths,
         allowHiddenPaths: this.allowHiddenPaths,
         telemetry: this.telemetry,

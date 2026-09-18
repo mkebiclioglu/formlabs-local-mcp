@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { Server } from "node:http";
-import { writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createApp, type AppContext } from "../src/app.js";
 import { PreFormError } from "../src/client.js";
@@ -69,6 +69,36 @@ describe("import_model", () => {
     const err = await callTool(app, "import_model", { file: stl }, noProgress).catch((e) => e);
     expect(err).toBeInstanceOf(PreFormError);
     expect(err.code).toBe("IMPORT_PRODUCED_EMPTY_SCENE");
+  });
+});
+
+describe("Wine path mapping", () => {
+  it.skipIf(process.platform === "win32")("sends Z: paths for inputs and outputs while validating and collecting locally", async () => {
+    let scenes = 0;
+    const { app, home, calls } = await appWith({
+      "GET /scene/default/": (_r, _b, res) => json(res, 200, { id: "default", models: scenes++ === 0 ? [] : [{ id: "m1" }] }),
+      "POST /scene/default/import-model/": (_r, _b, res) => json(res, 200, { id: "m1" }),
+      "POST /scene/default/save-form/": (_r, _b, res) => json(res, 200, {}),
+    }, { pathStyle: "wine", pathMap: [] });
+    const stl = join(home, "part.stl");
+    writeFileSync(stl, "");
+    await callTool(app, "import_model", { file: stl }, noProgress);
+    expect(JSON.parse(calls.find((c) => c.path.endsWith("import-model/"))!.body).file).toBe(`Z:${stl}`);
+    await callTool(app, "save_form", { file: join(home, "out.form") }, noProgress);
+    expect(JSON.parse(calls.find((c) => c.path.endsWith("save-form/"))!.body).file).toBe(`Z:${join(home, "out.form")}`);
+  });
+  it("rewrites a mounted directory for a containerised PreFormServer", async () => {
+    let scenes = 0;
+    const { app, home, calls } = await appWith({
+      "GET /scene/default/": (_r, _b, res) => json(res, 200, { id: "default", models: scenes++ === 0 ? [] : [{ id: "m1" }] }),
+      "POST /scene/default/import-model/": (_r, _b, res) => json(res, 200, { id: "m1" }),
+    }, { pathStyle: "native" });
+    app.config.pathMap = [{ local: home, remote: "Z:/jobs" }]; // the fake home is only known after appWith
+    const stl = join(home, "sub", "part.stl");
+    mkdirSync(join(home, "sub"));
+    writeFileSync(stl, "");
+    await callTool(app, "import_model", { file: stl }, noProgress);
+    expect(JSON.parse(calls.find((c) => c.path.endsWith("import-model/"))!.body).file).toBe("Z:/jobs/sub/part.stl");
   });
 });
 
