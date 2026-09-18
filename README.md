@@ -20,7 +20,7 @@ Needs Node.js 20 or newer. Nothing else. Published on npm as
 provenance. Pin the version you tested with:
 
 ```bash
-claude mcp add --scope user formlabs -- npx -y formlabs-local-mcp@1.0.7
+claude mcp add --scope user formlabs -- npx -y formlabs-local-mcp@1.0.8
 ```
 
 Using Claude Code? The [plugin](https://mkebiclioglu.github.io/formlabs-claude-skills/)
@@ -34,7 +34,7 @@ For other MCP clients, put the same command in their config:
   "mcpServers": {
     "formlabs": {
       "command": "npx",
-      "args": ["-y", "formlabs-local-mcp@1.0.7"]
+      "args": ["-y", "formlabs-local-mcp@1.0.8"]
     }
   }
 }
@@ -46,7 +46,7 @@ tool, which downloads the current release from Formlabs, verifies Formlabs' code
 signature, and installs it into a folder you own. From a shell the same thing is:
 
 ```bash
-npx -y formlabs-local-mcp@1.0.7 install-preform
+npx -y formlabs-local-mcp@1.0.8 install-preform
 ```
 
 If you already have `PreFormServer.app` in `/Applications`, it is picked up as is.
@@ -76,6 +76,12 @@ If you already have `PreFormServer.app` in `/Applications`, it is picked up as i
 
 Tools carry MCP annotations (`readOnlyHint`, `destructiveHint`) so clients can ask
 before `print_to_printer`, `save_form`, `install_preform_server` or any delete.
+
+Fuse X1: PreFormServer 3.63.0 prepares jobs for it (`machine_type` `FUSX-1-0`,
+`material_code` `FLP12G01`, 0.11 mm, the one setting it ships) but leaves the
+family out of `list-materials`; `list_printer_types` and `list_materials` add it
+with an `unlisted` note until Formlabs lists it. No other material or layer
+height, and no `auto_pack`, in this release.
 
 No printer yet? PreFormServer ships a built-in virtual printer for every model
 (`list_devices` shows them with `connection_type: VIRTUAL`), and

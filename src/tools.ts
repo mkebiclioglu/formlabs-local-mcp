@@ -18,6 +18,7 @@ import { isRecord, PreFormError, type Json } from "./client.js";
 import { DOWNLOAD_PAGE, isLoopback, managedInstallDir } from "./config.js";
 import { installPreformServer, installedVersion } from "./installer.js";
 import { FORM, FPS, IMAGE, MODEL, inputPath, outputPath } from "./paths.js";
+import { withUnlistedPrinterTypes } from "./printers.js";
 
 export interface ToolCtx {
   progress(fraction: number, message: string): Promise<void>;
@@ -403,7 +404,7 @@ tool({
 
 tool({
   name: "auto_pack",
-  description: "Pack all models into the 3D build chamber. SLS printers only (machine types starting with FS or PILK). For SLA printers use auto_layout. `packing_mode` is PACK_HEIGHT (minimize build height, faster print) or PACK_VOLUME (tightest packing).",
+  description: "Pack all models into the 3D build chamber. SLS printers only (machine types starting with FS or PILK; PreFormServer 3.63.0 refuses it for the Fuse X1, FUSX-1-0, where models stay where import_model put them). For SLA printers use auto_layout. `packing_mode` is PACK_HEIGHT (minimize build height, faster print) or PACK_VOLUME (tightest packing).",
   annotations: MUTATING,
   input: z.object({ scene_id: sceneId, model_spacing_mm: z.number().optional(), distance_from_wall_mm: z.number().optional(), packing_mode: z.enum(["PACK_HEIGHT", "PACK_VOLUME"]).optional(), seed: z.number().int().optional() }),
   handler: (app, { scene_id, ...rest }, ctx) => app.client.postAsync(`/scene/${scene_id}/auto-pack/`, body(rest), progressFor(ctx, "packing")),
@@ -660,10 +661,11 @@ tool({
   input: z.object({ machine_type: z.string().optional() }),
   async handler(app, { machine_type }) {
     const data = (await app.client.get("/list-materials/")) as Json;
-    if (!machine_type) return data;
+    const all = withUnlistedPrinterTypes(data);
+    if (!machine_type) return { ...data, printer_types: all };
     const wanted = machine_type.toUpperCase();
-    const printers = (Array.isArray(data["printer_types"]) ? data["printer_types"] : []).filter((p) => {
-      const ids = isRecord(p) && Array.isArray(p["supported_machine_type_ids"]) ? p["supported_machine_type_ids"] : [];
+    const printers = all.filter((p) => {
+      const ids = Array.isArray(p["supported_machine_type_ids"]) ? p["supported_machine_type_ids"] : [];
       return ids.map((x) => String(x).toUpperCase()).includes(wanted);
     });
     return { printer_types: printers };
@@ -672,18 +674,18 @@ tool({
 
 tool({
   name: "list_printer_types",
-  description: 'Short list of printer families with machine_type codes and build volumes. Use it to map a printer name ("Form 4", "Fuse 1+") to a machine_type before create_scene. FORM-/FRM codes are SLA (auto_layout); FS/PILK codes are SLS (auto_pack).',
+  description: 'Short list of printer families with machine_type codes and build volumes. Use it to map a printer name ("Form 4", "Fuse 1+", "Fuse X1") to a machine_type before create_scene. FORM-/FRM codes are SLA (auto_layout); FS/PILK/FUSX codes are SLS (auto_pack). Families PreFormServer accepts but does not list yet (the Fuse X1 in 3.63.0) carry an `unlisted` note.',
   annotations: READ_ONLY,
   input: z.object({}),
   async handler(app) {
     const data = (await app.client.get("/list-materials/")) as Json;
-    const printers = Array.isArray(data["printer_types"]) ? data["printer_types"].filter(isRecord) : [];
-    return printers.map((p) => ({
+    return withUnlistedPrinterTypes(data).map((p) => ({
       label: p["label"],
       machine_types: p["supported_machine_type_ids"] ?? [],
       product_names: p["supported_product_names"] ?? [],
       build_volume_dimensions_mm: p["build_volume_dimensions_mm"],
       material_count: Array.isArray(p["materials"]) ? p["materials"].length : 0,
+      ...(p["unlisted"] ? { unlisted: p["unlisted"] } : {}),
     }));
   },
 });

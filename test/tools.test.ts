@@ -173,6 +173,26 @@ describe("list_materials", () => {
     const out = (await callTool(app, "list_materials", { machine_type: "form-4-0" }, noProgress)) as { printer_types: { label: string }[] };
     expect(out.printer_types.map((p) => p.label)).toEqual(["Form 4"]);
   });
+
+  it("adds the Fuse X1 while PreFormServer leaves it out of the list", async () => {
+    const { app } = await appWith({ "GET /list-materials/": (_r, _b, res) => json(res, 200, { printer_types: [
+      { label: "Fuse 1+", supported_machine_type_ids: ["FS30-1-0"], materials: [] },
+    ] }) });
+    const types = (await callTool(app, "list_printer_types", {}, noProgress)) as { label: string; machine_types: string[]; unlisted?: string }[];
+    expect(types.map((p) => p.label)).toEqual(["Fuse 1+", "Fuse X1"]);
+    expect(types[1]).toMatchObject({ machine_types: ["FUSX-1-0"], unlisted: expect.stringContaining("list-materials") });
+    const mats = (await callTool(app, "list_materials", { machine_type: "fusx-1-0" }, noProgress)) as { printer_types: { materials: { material_settings: { scene_settings: Record<string, unknown> }[] }[] }[] };
+    expect(mats.printer_types[0]!.materials[0]!.material_settings[0]!.scene_settings).toEqual({ layer_thickness_mm: 0.11, machine_type: "FUSX-1-0", material_code: "FLP12G01", print_setting: "DEFAULT" });
+  });
+
+  it("does not duplicate a family the server already lists", async () => {
+    const { app } = await appWith({ "GET /list-materials/": (_r, _b, res) => json(res, 200, { printer_types: [
+      { label: "Fuse X1", supported_machine_type_ids: ["FUSX-1-0"], materials: [] },
+    ] }) });
+    const types = (await callTool(app, "list_printer_types", {}, noProgress)) as { label: string; unlisted?: string }[];
+    expect(types).toHaveLength(1);
+    expect(types[0]!.unlisted).toBeUndefined();
+  });
 });
 
 describe("preform_status", () => {
