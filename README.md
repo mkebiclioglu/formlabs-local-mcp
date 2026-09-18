@@ -76,6 +76,12 @@ If you already have `PreFormServer.app` in `/Applications`, it is picked up as i
 
 Tools carry MCP annotations (`readOnlyHint`, `destructiveHint`) so clients can ask
 before `print_to_printer`, `save_form`, `install_preform_server` or any delete.
+
+No printer yet? PreFormServer ships a built-in virtual printer for every model
+(`list_devices` shows them with `connection_type: VIRTUAL`), and
+`print_to_printer` with `"Form 4"` runs the whole job upload against one, so a
+pipeline can be rehearsed end to end before hardware arrives. The integration
+tests do exactly that on macOS, Windows and Linux.
 Tracks Formlabs Local API **0.9.30** (PreFormServer 3.63.0). The installer picks the Apple Silicon
 build on arm64 Macs and the Intel build elsewhere, falling back to Intel for releases that only ship it.
 

@@ -75,6 +75,15 @@ async function main(stlArg?: string): Promise<number> {
     const loaded = (await callTool(app, "load_form", { file: form }, ctx)) as { id?: string; models?: unknown[] };
     check("load_form", (loaded.models?.length ?? 0) === 1, `id=${loaded.id}`);
 
+    // PreFormServer ships one built-in virtual printer per model ("Form 4", "Fuse 1+", ...;
+    // connection_type VIRTUAL). Printing to one exercises the whole job upload path without
+    // hardware, so this is the closest thing to a print test a CI runner can do.
+    const devices = (await callTool(app, "list_devices", {}, ctx)) as { devices?: { id?: string; connection_type?: string }[] };
+    const virtual = (devices.devices ?? []).filter((d) => d.connection_type === "VIRTUAL").map((d) => d.id);
+    check("list_devices", virtual.includes("Form 4"), `${virtual.length} virtual printers`);
+    const job = (await callTool(app, "print_to_printer", { printer: "Form 4", job_name: "smoke", scene_id: sceneId }, ctx)) as { job_id?: string };
+    check("print_to_printer (virtual Form 4)", !!job.job_id, `job_id=${job.job_id}`);
+
     const guard = await callTool(app, "import_model", { file: "/etc/hosts.stl", scene_id: sceneId }, ctx).then(() => "accepted", (e: Error) => e.message);
     check("path guard", /outside|does not exist/.test(guard), guard.slice(0, 80));
   } finally {

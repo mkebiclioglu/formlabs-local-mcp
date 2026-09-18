@@ -618,7 +618,7 @@ tool({
 
 tool({
   name: "list_devices",
-  description: "List printers PreFormServer has already discovered (run discover_devices to refresh). Includes Fleet Control queues and Dashboard printers only after login.",
+  description: 'List printers PreFormServer knows: discovered LAN printers (run discover_devices to refresh), Fleet Control queues and Dashboard printers after login, and its built-in virtual printers (connection_type VIRTUAL, one per model such as "Form 4"), which accept print_to_printer as a hardware-free dry run of the whole upload path.',
   annotations: READ_ONLY,
   input: z.object({ can_print: z.boolean().optional() }),
   handler: (app, { can_print }) => app.client.get("/devices/", can_print === undefined ? undefined : { can_print: String(can_print) }),
@@ -643,7 +643,7 @@ tool({
 tool({
   name: "print_to_printer",
   description:
-    'Upload the scene to a printer and queue it, or start it. Confirm with the user first. `printer` is a printer serial name (e.g. "Fuse-Loud-Otter"), a local IP address, or a Fleet Control queue id (requires login). `print_now=true` starts immediately if the printer is ready; otherwise the job waits in the queue. Returns `job_id`.',
+    'Upload the scene to a printer and queue it, or start it. Confirm with the user first. `printer` is a printer serial name (e.g. "Fuse-Loud-Otter"), a local IP address, a Fleet Control queue id (requires login), or a built-in virtual printer id such as "Form 4" for a dry run without hardware. `print_now=true` starts immediately if the printer is ready; otherwise the job waits in the queue. Returns `job_id`.',
   annotations: DESTRUCTIVE,
   input: z.object({ printer: z.string(), job_name: z.string(), scene_id: sceneId, print_now: z.boolean().optional(), find_printer_timeout_seconds: z.number().int().default(30) }),
   handler: (app, { scene_id, ...rest }, ctx) => app.client.postAsync(`/scene/${scene_id}/print/`, body(rest), progressFor(ctx, "uploading job")),
