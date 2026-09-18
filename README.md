@@ -77,6 +77,12 @@ If you already have `PreFormServer.app` in `/Applications`, it is picked up as i
 Tools carry MCP annotations (`readOnlyHint`, `destructiveHint`) so clients can ask
 before `print_to_printer`, `save_form`, `install_preform_server` or any delete.
 
+Fuse X1: PreFormServer 3.63.0 prepares jobs for it (`machine_type` `FUSX-1-0`,
+`material_code` `FLP12G01`, 0.11 mm, the one setting it ships) but leaves the
+family out of `list-materials`; `list_printer_types` and `list_materials` add it
+with an `unlisted` note until Formlabs lists it. No other material or layer
+height, and no `auto_pack`, in this release.
+
 No printer yet? PreFormServer ships a built-in virtual printer for every model
 (`list_devices` shows them with `connection_type: VIRTUAL`), and
 `print_to_printer` with `"Form 4"` runs the whole job upload against one, so a

@@ -404,7 +404,7 @@ tool({
 
 tool({
   name: "auto_pack",
-  description: "Pack all models into the 3D build chamber. SLS printers only (machine types starting with FS or PILK). For SLA printers use auto_layout. `packing_mode` is PACK_HEIGHT (minimize build height, faster print) or PACK_VOLUME (tightest packing).",
+  description: "Pack all models into the 3D build chamber. SLS printers only (machine types starting with FS or PILK; PreFormServer 3.63.0 refuses it for the Fuse X1, FUSX-1-0, where models stay where import_model put them). For SLA printers use auto_layout. `packing_mode` is PACK_HEIGHT (minimize build height, faster print) or PACK_VOLUME (tightest packing).",
   annotations: MUTATING,
   input: z.object({ scene_id: sceneId, model_spacing_mm: z.number().optional(), distance_from_wall_mm: z.number().optional(), packing_mode: z.enum(["PACK_HEIGHT", "PACK_VOLUME"]).optional(), seed: z.number().int().optional() }),
   handler: (app, { scene_id, ...rest }, ctx) => app.client.postAsync(`/scene/${scene_id}/auto-pack/`, body(rest), progressFor(ctx, "packing")),

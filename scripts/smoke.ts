@@ -86,14 +86,17 @@ async function main(stlArg?: string): Promise<number> {
     check("print_to_printer (virtual Form 4)", !!job.job_id, `job_id=${job.job_id}`);
 
     // Fuse X1: PreFormServer 3.63.0 accepts FUSX-1-0 with its one shipped setting even though
-    // /list-materials/ omits the family (src/printers.ts fills the gap). SLS flow: auto_pack.
+    // /list-materials/ omits the family (src/printers.ts fills the gap). It refuses auto_pack
+    // and auto_layout for this machine type, so the model stays where import put it.
     const fx = (await callTool(app, "create_scene", { machine_type: "FUSX-1-0", material_code: "FLP12G01", layer_thickness_mm: 0.11 }, ctx)) as { id?: string; build_volume?: { dimensions_mm?: { x?: number } } };
     check("create_scene (Fuse X1)", fx.build_volume?.dimensions_mm?.x === 330, `id=${fx.id} x=${fx.build_volume?.dimensions_mm?.x}`);
     if (fx.id) {
       await callTool(app, "import_model", { file: stl, scene_id: fx.id }, ctx);
-      await callTool(app, "auto_pack", { scene_id: fx.id }, ctx);
       const fxEst = (await callTool(app, "estimate_print_time", { scene_id: fx.id }, ctx)) as Record<string, unknown>;
-      check("auto_pack + estimate_print_time (Fuse X1)", "total_print_time_s" in fxEst, JSON.stringify(fxEst));
+      check("import_model + estimate_print_time (Fuse X1)", "total_print_time_s" in fxEst, JSON.stringify(fxEst));
+      const fxForm = path.join(workdir, "fusex1.form");
+      await callTool(app, "save_form", { file: fxForm, scene_id: fx.id }, ctx);
+      check("save_form (Fuse X1)", statSync(fxForm).size > 0, fxForm);
     }
 
     const guard = await callTool(app, "import_model", { file: "/etc/hosts.stl", scene_id: sceneId }, ctx).then(() => "accepted", (e: Error) => e.message);
