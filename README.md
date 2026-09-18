@@ -20,7 +20,7 @@ Needs Node.js 20 or newer. Nothing else. Published on npm as
 provenance. Pin the version you tested with:
 
 ```bash
-claude mcp add --scope user formlabs -- npx -y formlabs-local-mcp@1.0.6
+claude mcp add --scope user formlabs -- npx -y formlabs-local-mcp@1.0.7
 ```
 
 Using Claude Code? The [plugin](https://mkebiclioglu.github.io/formlabs-claude-skills/)
@@ -34,7 +34,7 @@ For other MCP clients, put the same command in their config:
   "mcpServers": {
     "formlabs": {
       "command": "npx",
-      "args": ["-y", "formlabs-local-mcp@1.0.6"]
+      "args": ["-y", "formlabs-local-mcp@1.0.7"]
     }
   }
 }
@@ -46,7 +46,7 @@ tool, which downloads the current release from Formlabs, verifies Formlabs' code
 signature, and installs it into a folder you own. From a shell the same thing is:
 
 ```bash
-npx -y formlabs-local-mcp@1.0.6 install-preform
+npx -y formlabs-local-mcp@1.0.7 install-preform
 ```
 
 If you already have `PreFormServer.app` in `/Applications`, it is picked up as is.
@@ -76,6 +76,12 @@ If you already have `PreFormServer.app` in `/Applications`, it is picked up as i
 
 Tools carry MCP annotations (`readOnlyHint`, `destructiveHint`) so clients can ask
 before `print_to_printer`, `save_form`, `install_preform_server` or any delete.
+
+No printer yet? PreFormServer ships a built-in virtual printer for every model
+(`list_devices` shows them with `connection_type: VIRTUAL`), and
+`print_to_printer` with `"Form 4"` runs the whole job upload against one, so a
+pipeline can be rehearsed end to end before hardware arrives. The integration
+tests do exactly that on macOS, Windows and Linux.
 Tracks Formlabs Local API **0.9.30** (PreFormServer 3.63.0). The installer picks the Apple Silicon
 build on arm64 Macs and the Intel build elsewhere, falling back to Intel for releases that only ship it.
 
