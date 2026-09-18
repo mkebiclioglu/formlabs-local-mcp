@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import path, { join } from "node:path";
 import { parsePathMap, toServerPath } from "../src/pathmap.js";
 import { tmp } from "./helpers.js";
 
@@ -35,8 +35,11 @@ describe("toServerPath", () => {
     expect(toServerPath("/srv/jobs/a/b.stl", "native", map)).toBe("Z:/jobs/a/b.stl");
     expect(toServerPath("/srv/jobs/fast/c.form", "wine", map)).toBe("Z:/fast/c.form");
     expect(toServerPath("/srv/jobs", "wine", map)).toBe("Z:/jobs");
+    expect(toServerPath("/srv/jobsx/x.stl", "native", map)).toBe(path.resolve("/srv/jobsx/x.stl")); // no match: untouched
+  });
+  posix("falls back to Z: for unmapped paths in wine style", () => {
+    const map = parsePathMap("/srv/jobs=Z:/jobs", "/h");
     expect(toServerPath("/srv/other/x.stl", "wine", map)).toBe("Z:/srv/other/x.stl");
-    expect(toServerPath("/srv/jobsx/x.stl", "native", map)).toBe("/srv/jobsx/x.stl");
   });
   it("matches paths that go through a symlinked mapping root", () => {
     const root = tmp();
