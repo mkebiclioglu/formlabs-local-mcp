@@ -85,7 +85,7 @@ async function main(stlArg?: string): Promise<number> {
     const job = (await callTool(app, "print_to_printer", { printer: "Form 4", job_name: "smoke", scene_id: loaded.id ?? sceneId }, ctx)) as { job_id?: string };
     check("print_to_printer (virtual Form 4)", !!job.job_id, `job_id=${job.job_id}`);
 
-    // Fuse X1: PreFormServer 3.63.0 accepts FUSX-1-0 with its one shipped setting even though
+    // Fuse X1: PreFormServer 3.63 accepts FUSX-1-0 with its one shipped setting even though
     // /list-materials/ omits the family (src/printers.ts fills the gap). It refuses auto_pack
     // and auto_layout for this machine type, so the model stays where import put it.
     const fx = (await callTool(app, "create_scene", { machine_type: "FUSX-1-0", material_code: "FLP12G01", layer_thickness_mm: 0.11 }, ctx)) as { id?: string; build_volume?: { dimensions_mm?: { x?: number } } };

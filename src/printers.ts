@@ -1,7 +1,7 @@
 /**
  * Printer families PreFormServer accepts scenes for but leaves out of /list-materials/.
  *
- * Verified against PreFormServer 3.63.0: `POST /scene/` with FUSX-1-0 / FLP12G01 /
+ * Verified against PreFormServer 3.63.0 and 3.63.1: `POST /scene/` with FUSX-1-0 / FLP12G01 /
  * 0.11 mm creates a 330 x 330 x 565 mm Fuse X1 scene, yet the printer family is not
  * in the materials list, so a client that only trusts the list never learns the code.
  * Every other (material, layer) pair for FUSX-1-0 answers "Scene type not supported",
@@ -22,7 +22,7 @@ export const UNLISTED_PRINTER_TYPES: Json[] = [
     materials: [
       {
         label: "Nylon 12 GF V1",
-        description: "The one Fuse X1 print setting PreFormServer 3.63.0 ships",
+        description: "The one Fuse X1 print setting PreFormServer 3.63 ships",
         material_settings: [
           {
             label: "0.110 mm (Default settings)",
@@ -31,7 +31,7 @@ export const UNLISTED_PRINTER_TYPES: Json[] = [
         ],
       },
     ],
-    unlisted: "Not returned by PreFormServer's /list-materials/ (3.63.0); create_scene accepts these settings.",
+    unlisted: "Not returned by PreFormServer's /list-materials/ (3.63); create_scene accepts these settings.",
   },
 ];
 
