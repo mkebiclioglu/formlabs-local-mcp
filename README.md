@@ -20,7 +20,7 @@ Needs Node.js 20 or newer. Nothing else. Published on npm as
 provenance. Pin the version you tested with:
 
 ```bash
-claude mcp add --scope user formlabs -- npx -y formlabs-local-mcp@1.0.9
+claude mcp add --scope user formlabs -- npx -y formlabs-local-mcp@1.0.10
 ```
 
 Using Claude Code? The [plugin](https://mkebiclioglu.github.io/formlabs-claude-skills/)
@@ -34,7 +34,7 @@ For other MCP clients, put the same command in their config:
   "mcpServers": {
     "formlabs": {
       "command": "npx",
-      "args": ["-y", "formlabs-local-mcp@1.0.9"]
+      "args": ["-y", "formlabs-local-mcp@1.0.10"]
     }
   }
 }
@@ -46,7 +46,7 @@ tool, which downloads the current release from Formlabs, verifies Formlabs' code
 signature, and installs it into a folder you own. From a shell the same thing is:
 
 ```bash
-npx -y formlabs-local-mcp@1.0.9 install-preform
+npx -y formlabs-local-mcp@1.0.10 install-preform
 ```
 
 If you already have `PreFormServer.app` in `/Applications`, it is picked up as is.
@@ -77,7 +77,7 @@ If you already have `PreFormServer.app` in `/Applications`, it is picked up as i
 Tools carry MCP annotations (`readOnlyHint`, `destructiveHint`) so clients can ask
 before `print_to_printer`, `save_form`, `install_preform_server` or any delete.
 
-Fuse X1: PreFormServer 3.63.0 prepares jobs for it (`machine_type` `FUSX-1-0`,
+Fuse X1: PreFormServer 3.63 (3.63.0 and 3.63.1) prepares jobs for it (`machine_type` `FUSX-1-0`,
 `material_code` `FLP12G01`, 0.11 mm, the one setting it ships) but leaves the
 family out of `list-materials`; `list_printer_types` and `list_materials` add it
 with an `unlisted` note until Formlabs lists it. No other material or layer
@@ -88,7 +88,7 @@ No printer yet? PreFormServer ships a built-in virtual printer for every model
 `print_to_printer` with `"Form 4"` runs the whole job upload against one, so a
 pipeline can be rehearsed end to end before hardware arrives. The integration
 tests do exactly that on macOS, Windows and Linux.
-Tracks Formlabs Local API **0.9.30** (PreFormServer 3.63.0). The installer picks the Apple Silicon
+Tracks Formlabs Local API **0.9.31** (PreFormServer 3.63.1). The installer picks the Apple Silicon
 build on arm64 Macs and the Intel build elsewhere, falling back to Intel for releases that only ship it.
 
 ## Configuration
@@ -142,7 +142,7 @@ Authenticode signature with `osslsigncode`; the server then starts it through `w
 with headless defaults (`QT_OPENGL=software`, no Mono/Gecko prompts) and writes file
 paths as `Z:/home/me/...` automatically. Needs Wine **11.5 or newer** from
 [WineHQ](https://wiki.winehq.org/Ubuntu) (distro Wine 9.0 cannot load PreFormServer
-3.63.0) and a display: `PREFORM_LAUNCHER="xvfb-run -a wine"` on a headless box. Wine
+3.63) and a display: `PREFORM_LAUNCHER="xvfb-run -a wine"` on a headless box. Wine
 11.13+ runs it as is; 11.5 to 11.12 need preform-linux's small `dnsapi.dll` shim. LAN
 printer discovery by mDNS does not work under Wine; pass a printer's IP to
 `discover_devices` and `print_to_printer` instead, or `login` for Fleet Control. A weekly
