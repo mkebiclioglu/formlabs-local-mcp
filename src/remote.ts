@@ -16,6 +16,7 @@
  */
 
 import { spawn, execFile, type ChildProcess } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { statSync } from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -83,7 +84,7 @@ export class RemoteBackend implements Backend {
   private readonly staged = new Map<string, { remote: string; mtimeMs: number }>();
   private readonly log: (line: string) => void;
   private readonly env: NodeJS.ProcessEnv;
-  private readonly sessionId = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+  private readonly sessionId = `${Date.now().toString(36)}${randomBytes(4).toString("hex")}`;
 
   constructor(private readonly cfg: Config, private readonly opts: RemoteOptions) {
     if (!cfg.remote) throw new Error("RemoteBackend requires cfg.remote");
