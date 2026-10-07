@@ -24,7 +24,8 @@ export async function fakePreform(routes: Record<string, Route>): Promise<{ url:
     req.on("end", () => {
       const path = (req.url ?? "/").split("?")[0] ?? "/";
       calls.push({ method: req.method ?? "", path, body });
-      const route = routes[`${req.method} ${path}`];
+      const key = `${req.method} ${path}`;
+      const route = Object.hasOwn(routes, key) ? routes[key] : undefined;
       if (!route) {
         res.writeHead(404, { "content-type": "application/json" });
         res.end(JSON.stringify({ error: { code: "NOT_FOUND", message: `no route ${req.method} ${path}` } }));
