@@ -102,6 +102,31 @@ describe("Wine path mapping", () => {
   });
 });
 
+describe("ids in request paths", () => {
+  it("refuses ids that would point a tool at another endpoint, before any HTTP call", async () => {
+    const { app, calls } = await appWith({});
+    for (const [name, args] of [
+      ["get_scene", { scene_id: "../user" }],
+      ["get_scene", { scene_id: ".." }],
+      ["get_model", { model_id: "m1/../../../logout" }],
+      ["duplicate_model", { model_id: "x", scene_id: "default/print/?" }],
+      ["delete_scene", { scene_id: "%2e%2e" }],
+      ["get_device", { device_id: "a#b" }],
+    ] as const) {
+      await expect(callTool(app, name, args, noProgress), name).rejects.toThrow(/plain id/);
+    }
+    expect(calls).toHaveLength(0);
+  });
+  it("still accepts the ids PreFormServer hands out", async () => {
+    const { app } = await appWith({
+      "GET /devices/Form%204/": (_r, _b, res) => json(res, 200, { id: "Form 4" }),
+      "GET /scene/3f0c1a52-9d1e-4d0a-8a57-1f6f4f1f0b11/models/%7Bab-12%7D/": (_r, _b, res) => json(res, 200, { id: "ab-12" }),
+    });
+    await expect(callTool(app, "get_device", { device_id: "Form 4" }, noProgress)).resolves.toEqual({ id: "Form 4" });
+    await expect(callTool(app, "get_model", { model_id: "{ab-12}", scene_id: "3f0c1a52-9d1e-4d0a-8a57-1f6f4f1f0b11" }, noProgress)).resolves.toEqual({ id: "ab-12" });
+  });
+});
+
 describe("create_scene", () => {
   it("explains INPUT_ERROR in terms of list_materials", async () => {
     const { app } = await appWith({ "POST /scene/": (_r, _b, res) => json(res, 400, { error: { code: "INPUT_ERROR", message: "Scene type not supported" } }) });

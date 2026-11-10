@@ -33,9 +33,23 @@ export function isFormlabsSubject(subject: string): boolean {
   return hasField("CN") && hasField("O");
 }
 
-/** True when some "Subject:" line in a verifier's output names Formlabs Inc. */
+/**
+ * True when every signature osslsigncode reports was made by Formlabs Inc.
+ *
+ * Only the certificate printed right under "Signer's certificate:" is the one
+ * that signed. osslsigncode up to 2.7 also lists every certificate embedded in
+ * the signature ("Number of certificates:"), and that list is not covered by
+ * the signature, so a "Subject:" line found anywhere else proves nothing.
+ */
 export function outputHasFormlabsSubject(output: string): boolean {
-  return output.split("\n").some((line) => /Subject\s*:/.test(line) && isFormlabsSubject(line.replace(/^.*Subject\s*:\s*/, "")));
+  const lines = output.split("\n");
+  const signers: string[] = [];
+  lines.forEach((line, i) => {
+    if (!/^Signer's certificate:\s*$/.test(line)) return;
+    const subject = lines.slice(i + 1, i + 4).find((l) => /^\s*Subject\s*:/.test(l));
+    signers.push(subject?.replace(/^\s*Subject\s*:\s*/, "") ?? "");
+  });
+  return signers.length > 0 && signers.every(isFormlabsSubject);
 }
 /** Microsoft Identity Verification Root CA 2020: the only root accepted for the Linux check. */
 export const MS_ROOT_PEM = fileURLToPath(new URL("../certs/microsoft-identity-verification-root-2020.pem", import.meta.url));
@@ -170,7 +184,9 @@ export function readInstallMeta(installDir: string): InstallMeta | undefined {
 async function download(url: string, dest: string, log: (l: string) => void, progress?: InstallOptions["progress"]): Promise<void> {
   const resp = await fetch(url, { redirect: "follow", headers: { "user-agent": "formlabs-local-mcp" }, signal: AbortSignal.timeout(30 * 60_000) });
   if (!resp.ok || !resp.body) throw new Error(`Download failed: HTTP ${resp.status} for ${url}`);
-  if (new URL(resp.url || url).hostname !== new URL(url).hostname) throw new Error(`Download redirected off ${new URL(url).hostname}; refusing`);
+  const asked = new URL(url);
+  const got = new URL(resp.url || url);
+  if (got.hostname !== asked.hostname || got.protocol !== asked.protocol) throw new Error(`Download redirected off ${asked.protocol}//${asked.hostname}; refusing`);
   const declared = Number(resp.headers.get("content-length") ?? 0);
   if (declared > MAX_DOWNLOAD_BYTES) throw new Error(`Download too large (${declared} bytes)`);
   const out = createWriteStream(dest);

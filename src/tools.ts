@@ -67,7 +67,12 @@ export async function callTool(app: AppContext, name: string, args: unknown, ctx
 // Shared schemas and helpers
 // ---------------------------------------------------------------------------
 
-const sceneId = z.string().default("default").describe("Scene id; omit for the default scene");
+/**
+ * Ids are placed in the request path, so one that could change the path ("../login", "x/print", "a?b")
+ * would let a tool reach a different PreFormServer endpoint than the one it is annotated for.
+ */
+const pathId = z.string().regex(/^(?!\.{1,2}$)[^/\\?#%]+$/, "must be a plain id without /, \\, ?, # or %");
+const sceneId = pathId.default("default").describe("Scene id; omit for the default scene");
 const models = z.union([z.literal("ALL"), z.array(z.string())]).default("ALL").describe('"ALL" or a list of model ids');
 const xyz = z.object({ x: z.number(), y: z.number(), z: z.number() });
 const orientation = z.record(z.string(), z.unknown()).describe("Euler degrees {x,y,z}, or {z_direction:[..], x_direction:[..]} unit vectors");
@@ -228,7 +233,7 @@ tool({
   name: "delete_scene",
   description: 'Delete a scene and its models. Deleting "default" resets it to empty.',
   annotations: DESTRUCTIVE,
-  input: z.object({ scene_id: z.string() }),
+  input: z.object({ scene_id: pathId }),
   async handler(app, { scene_id }) {
     return (await app.client.delete(`/scene/${scene_id}/`)) ?? { status: "deleted", scene_id };
   },
@@ -304,7 +309,7 @@ tool({
   name: "get_model",
   description: "Get one model's properties: transform, bounding box, supports, lock state.",
   annotations: READ_ONLY,
-  input: z.object({ model_id: z.string(), scene_id: sceneId }),
+  input: z.object({ model_id: pathId, scene_id: sceneId }),
   handler: (app, { model_id, scene_id }) => app.client.get(`/scene/${scene_id}/models/${model_id}/`),
 });
 
@@ -313,7 +318,7 @@ tool({
   description:
     "Move, rotate, rescale, rename or lock a model. `position` is {x,y,z} mm; `orientation` is Euler degrees {x,y,z}. `lock` (FREE, LOCKED_XY_ROTATION_FREE_TRANSLATION, LOCKED_ROTATION_FREE_TRANSLATION, FULLY_LOCKED) controls what auto_layout / auto_pack may change.",
   annotations: MUTATING,
-  input: z.object({ model_id: z.string(), scene_id: sceneId, name: z.string().optional(), position: xyz.optional(), orientation: orientation.optional(), scale: z.number().optional(), lock: z.string().optional() }),
+  input: z.object({ model_id: pathId, scene_id: sceneId, name: z.string().optional(), position: xyz.optional(), orientation: orientation.optional(), scale: z.number().optional(), lock: z.string().optional() }),
   handler(app, { model_id, scene_id, ...rest }) {
     const payload = body(rest);
     if (Object.keys(payload).length === 0) throw new Error("Nothing to update.");
@@ -325,7 +330,7 @@ tool({
   name: "duplicate_model",
   description: "Make `count` copies of a model. Returns the scene. Run auto_layout or auto_pack afterwards.",
   annotations: MUTATING,
-  input: z.object({ model_id: z.string(), count: z.number().int().min(1).default(1), scene_id: sceneId }),
+  input: z.object({ model_id: pathId, count: z.number().int().min(1).default(1), scene_id: sceneId }),
   handler: (app, { model_id, count, scene_id }) => app.client.post(`/scene/${scene_id}/models/${model_id}/duplicate/`, { count }),
 });
 
@@ -333,7 +338,7 @@ tool({
   name: "replace_model",
   description: "Swap a model's mesh for a new file while keeping its placement and supports. Useful when the user re-exports a revised part. `file` must be an absolute path.",
   annotations: MUTATING,
-  input: z.object({ model_id: z.string(), file: z.string(), scene_id: sceneId, repair_behavior: z.enum(["REPAIR", "ERROR", "IGNORE"]).default("REPAIR") }),
+  input: z.object({ model_id: pathId, file: z.string(), scene_id: sceneId, repair_behavior: z.enum(["REPAIR", "ERROR", "IGNORE"]).default("REPAIR") }),
   async handler(app, { model_id, file, scene_id, repair_behavior }) {
     const local = inputPath(file, app.config, MODEL);
     return app.client.post(`/scene/${scene_id}/models/${model_id}/replace/`, { file: await app.backend.stageInput(local), repair_behavior });
@@ -344,7 +349,7 @@ tool({
   name: "delete_model",
   description: "Remove a model from the scene.",
   annotations: DESTRUCTIVE,
-  input: z.object({ model_id: z.string(), scene_id: sceneId }),
+  input: z.object({ model_id: pathId, scene_id: sceneId }),
   async handler(app, { model_id, scene_id }) {
     return (await app.client.delete(`/scene/${scene_id}/models/${model_id}/`)) ?? { status: "deleted", model_id };
   },
@@ -629,7 +634,7 @@ tool({
   name: "get_device",
   description: "Status of one printer: connection, tank and cartridge material, time remaining.",
   annotations: READ_ONLY,
-  input: z.object({ device_id: z.string() }),
+  input: z.object({ device_id: pathId }),
   handler: (app, { device_id }) => app.client.get(`/devices/${device_id}/`),
 });
 

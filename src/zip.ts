@@ -103,9 +103,14 @@ function segments(name: string): string[] {
 
 /**
  * Throw if any entry could escape the extraction directory: absolute paths,
- * backslashes, drive letters, ".." segments, or symlinks pointing outside.
+ * backslashes, drive letters, ".." segments, symlinks pointing outside, or
+ * anything that reaches outside by going through another symlink (a link to
+ * the archive root followed by "..", or a file written below a linked name).
  */
 export function checkZipEntries(entries: ZipEntry[]): void {
+  // Lower-cased so a link cannot be reached under another spelling on case-insensitive filesystems.
+  const key = (segs: string[]) => segs.join("/").toLowerCase();
+  const links = new Set(entries.filter((e) => e.isSymlink).map((e) => key(segments(e.name))));
   for (const e of entries) {
     const bad = (why: string): never => {
       throw new Error(`Unsafe zip entry ${JSON.stringify(e.name)}: ${why}`);
@@ -116,12 +121,23 @@ export function checkZipEntries(entries: ZipEntry[]): void {
     if (e.name.includes("\0")) bad("NUL in name");
     const segs = segments(e.name);
     if (segs.includes("..")) bad("parent traversal");
+    for (let i = 1; i < segs.length; i++) {
+      if (links.has(key(segs.slice(0, i)))) bad("path goes through a symlink");
+    }
+    if (!e.isSymlink && links.has(key(segs))) bad("name is also a symlink");
     if (e.isSymlink) {
       const target = e.linkTarget ?? "";
       if (target.startsWith("/") || target.includes("\\") || /^[A-Za-z]:/.test(target)) bad("absolute symlink target");
       const dir = segs.slice(0, -1);
       const resolved = path.posix.normalize(path.posix.join(...dir, target));
       if (resolved === ".." || resolved.startsWith("../")) bad("symlink escapes archive");
+      // The lexical check above is only sound if ".." never follows another link.
+      const walked = [...dir];
+      for (const seg of segments(target)) {
+        if (seg !== "..") walked.push(seg);
+        else if (links.has(key(walked))) bad("symlink target climbs out of another symlink");
+        else walked.pop();
+      }
     }
   }
 }

@@ -46,6 +46,14 @@ function isUnder(target: string, root: string): boolean {
   return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
 }
 
+/**
+ * UNC and device paths (two leading slashes of either kind): merely checking whether such a path exists makes
+ * Windows authenticate to the named host, which hands it the user's NTLM hash.
+ */
+export function isWindowsNetworkPath(p: string): boolean {
+  return /^[\\/]{2}/.test(p);
+}
+
 function check(raw: string, cfg: Config, extensions: string[], mustExist: boolean): string {
   if (!raw || !raw.trim()) throw new PathNotAllowed("A file path is required.");
   const expanded = expandHome(raw, cfg.home);
@@ -54,7 +62,12 @@ function check(raw: string, cfg: Config, extensions: string[], mustExist: boolea
       `Path must be absolute (got ${JSON.stringify(raw)}). Resolve it against the working directory first; PreFormServer does not accept relative paths.`,
     );
   }
-  const resolved = resolveDeep(path.normalize(expanded));
+  const normalized = path.normalize(expanded);
+  if (cfg.platform === "win32" && isWindowsNetworkPath(normalized) && !cfg.allowedPaths.some((r) => isUnder(normalized, r))) {
+    // Refused before the filesystem is touched.
+    throw new PathNotAllowed(`${JSON.stringify(raw)} is a network path outside the allowed directories (${cfg.allowedPaths.join(", ")}).`);
+  }
+  const resolved = resolveDeep(normalized);
   const ext = path.extname(resolved).toLowerCase();
   if (!extensions.includes(ext)) {
     throw new PathNotAllowed(`${JSON.stringify(raw)} must end in one of: ${extensions.join(", ")}.`);

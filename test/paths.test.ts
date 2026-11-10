@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { FORM, IMAGE, MODEL, inputPath, outputPath } from "../src/paths.js";
+import { FORM, IMAGE, MODEL, inputPath, isWindowsNetworkPath, outputPath } from "../src/paths.js";
 import { makeConfig, tmp } from "./helpers.js";
 
 function sandbox() {
@@ -70,5 +70,21 @@ describe("outputPath", () => {
     const { root, cfg } = sandbox();
     expect(() => outputPath(join(root, "parts", "job.sh"), cfg, FORM)).toThrow(/must end in/);
     expect(outputPath(join(root, "parts", "shot.webp"), cfg, IMAGE)).toMatch(/shot\.webp$/);
+  });
+});
+
+describe("Windows network paths", () => {
+  it("recognises UNC and device paths", () => {
+    expect(isWindowsNetworkPath("\\\\evil\\share\\x.stl")).toBe(true);
+    expect(isWindowsNetworkPath("//evil/share/x.stl")).toBe(true);
+    expect(isWindowsNetworkPath("\\\\?\\C:\\Users\\me\\x.stl")).toBe(true);
+    expect(isWindowsNetworkPath("C:\\Users\\me\\x.stl")).toBe(false);
+    expect(isWindowsNetworkPath("/home/me/x.stl")).toBe(false);
+  });
+  it.runIf(process.platform === "win32")("refuses a UNC path outside the allowlist without touching it", () => {
+    const { cfg } = sandbox();
+    const win = { ...cfg, platform: "win32" as const };
+    expect(() => inputPath("\\\\192.0.2.1\\share\\x.stl", win)).toThrow(/network path/);
+    expect(() => outputPath("//192.0.2.1/share/x.form", win, FORM)).toThrow(/network path/);
   });
 });

@@ -41,6 +41,21 @@ describe("zip", () => {
     }
   });
 
+  it("rejects escapes built from more than one symlink", async () => {
+    for (const bad of [
+      // root -> the archive root, up -> root/.. is the directory above it
+      [{ name: "P/d/root", symlinkTo: "../.." }, { name: "P/up", symlinkTo: "d/root/.." }, { name: "P/up/evil", data: "x" }],
+      [{ name: "P/d/root", symlinkTo: "../.." }, { name: "P/up", symlinkTo: "d/root/.." }],
+      // a file written below a link, and a file that reuses a link's name
+      [{ name: "P/a/", data: "" }, { name: "P/link", symlinkTo: "a" }, { name: "P/link/file", data: "x" }],
+      [{ name: "P/a/", data: "" }, { name: "P/link", symlinkTo: "a" }, { name: "P/LINK/file", data: "x" }],
+      [{ name: "P/a", data: "" }, { name: "P/link", symlinkTo: "a" }, { name: "P/link", data: "x" }],
+    ]) {
+      const entries = await listZipEntries(zipFile(bad));
+      expect(() => checkZipEntries(entries), JSON.stringify(bad)).toThrow(/unsafe/i);
+    }
+  });
+
   it("allows relative symlinks that stay inside the archive", async () => {
     const entries = await listZipEntries(zipFile([
       { name: "PreFormServer/app/Frameworks/Q.framework/Versions/A/Q", data: "" },

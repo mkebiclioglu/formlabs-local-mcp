@@ -50,6 +50,24 @@ describe("verifyLinux", () => {
     await expect(verifyLinux("/x", makeConfig(), async () => ({ stdout: GOOD.replace(/Formlabs Inc\./g, "Someone Else"), stderr: "" }))).rejects.toThrow(/Cannot verify/);
     await expect(verifyLinux("/x", makeConfig(), async () => { throw new Error("osslsigncode is not installed"); })).rejects.toThrow(/not installed/);
   });
+  it("ignores Formlabs subjects that are not the signer's (embedded certificate list, chain)", async () => {
+    // osslsigncode <= 2.7 prints every certificate embedded in the signature, signed over or not.
+    const decoy = GOOD.replace("CN=Formlabs Inc.,O=Formlabs Inc.,L=Somerville,ST=Massachusetts,C=US", "CN=Evil Corp,O=Evil Corp,C=US").replace(
+      "Timestamp Server",
+      "\nNumber of certificates: 2\n\tSigner #0:\n\t\tSubject: CN=Evil Corp,O=Evil Corp,C=US\n\tSigner #1:\n\t\tSubject: CN=Formlabs Inc.,O=Formlabs Inc.,C=US\n\nTimestamp Server",
+    );
+    await expect(verifyLinux("/x", makeConfig(), async () => ({ stdout: decoy, stderr: "" }))).rejects.toThrow(/Cannot verify/);
+    // Two signatures: both signers must be Formlabs.
+    const second = GOOD + GOOD.replace("CN=Formlabs Inc.,O=Formlabs Inc.,L=Somerville,ST=Massachusetts,C=US", "CN=Evil Corp,O=Evil Corp,C=US");
+    await expect(verifyLinux("/x", makeConfig(), async () => ({ stdout: second, stderr: "" }))).rejects.toThrow(/Cannot verify/);
+  });
+  it("reads the signer from current osslsigncode output (separator line, chain listed afterwards)", async () => {
+    const current = GOOD.replace("Signer's certificate:\n", "Signer's certificate:\n\t------------------\n").replace(
+      "Timestamp Server",
+      "Signing certificate chain verified using:\n\t------------------\n\tSigner #1:\n\t\tSubject: CN=Microsoft Identity Verification Root Certificate Authority 2020,O=Microsoft Corporation\n\nTimestamp Server",
+    );
+    await expect(verifyLinux("/x", makeConfig(), async () => ({ stdout: current, stderr: "" }))).resolves.toBeUndefined();
+  });
   it("honours the explicit unverified opt-in only", async () => {
     await expect(verifyLinux("/x", makeConfig({ installUnverified: true }), async () => { throw new Error("osslsigncode is not installed"); })).resolves.toBeUndefined();
   });
