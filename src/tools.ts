@@ -1,6 +1,8 @@
 /**
- * The MCP tool surface. Each tool wraps one PreFormServer endpoint (Local API
- * 0.9.x). Long-running endpoints are called with `?async=true` and polled, so
+ * The MCP tool surface. Each tool wraps one PreFormServer endpoint: the
+ * original Local API routes (still served by PreFormServer 3.65), plus the
+ * /v1/ routes for features only v1 has (export_models,
+ * send_models_to_scene). Long-running endpoints are called with `?async=true` and polled, so
  * every tool call is synchronous from the model's point of view and reports
  * progress while it waits.
  *
@@ -17,7 +19,7 @@ import type { AppContext } from "./app.js";
 import { isRecord, PreFormError, type Json } from "./client.js";
 import { DOWNLOAD_PAGE, isLoopback, managedInstallDir } from "./config.js";
 import { installPreformServer, installedVersion } from "./installer.js";
-import { FORM, FPS, IMAGE, MODEL, inputPath, outputPath } from "./paths.js";
+import { FORM, FPS, IMAGE, MODEL, inputPath, outputDir, outputPath } from "./paths.js";
 import { withUnlistedPrinterTypes } from "./printers.js";
 
 export interface ToolCtx {
@@ -352,6 +354,54 @@ tool({
   input: z.object({ model_id: pathId, scene_id: sceneId }),
   async handler(app, { model_id, scene_id }) {
     return (await app.client.delete(`/scene/${scene_id}/models/${model_id}/`)) ?? { status: "deleted", model_id };
+  },
+});
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** v1 endpoints take a scene UUID only; resolve aliases such as "default" through the scene itself. */
+async function sceneUuid(app: AppContext, sceneIdOrAlias: string): Promise<string> {
+  if (UUID.test(sceneIdOrAlias)) return sceneIdOrAlias;
+  const scene = (await app.client.get(`/scene/${sceneIdOrAlias}/`)) as Json;
+  const id = isRecord(scene) ? scene["id"] : undefined;
+  if (typeof id !== "string" || !UUID.test(id)) throw new Error(`Could not resolve scene ${JSON.stringify(sceneIdOrAlias)} to its id.`);
+  return id;
+}
+
+const modelIds = z.array(z.string().regex(UUID, "must be a model id")).describe("Model ids");
+
+tool({
+  name: "export_models",
+  description:
+    "Write models to STL files in an existing directory (absolute path): one `<model_id><filename_postfix>.stl` per model, or with single_file one `<scene_id><filename_postfix>.stl`. Exports the geometry as imported, without supports, hollowing, labels or drain holes; `export_mode` CANONICAL_MODEL ignores the model's placement. Use it to get a model back out of a .form file. Models imported from STEP or made by PreForm cannot be exported. Overwrites files with the same names. Needs PreFormServer 3.65.0 or later.",
+  annotations: DESTRUCTIVE,
+  input: z.object({
+    folder: z.string(),
+    scene_id: sceneId,
+    model_ids: modelIds.optional().describe("Models to export; omit for every model in the scene"),
+    single_file: z.boolean().optional(),
+    export_mode: z.enum(["NORMAL", "CANONICAL_MODEL"]).optional(),
+    filename_postfix: z.string().regex(/^[A-Za-z0-9._-]*$/, "letters, digits, . _ - only").max(64).optional(),
+  }),
+  async handler(app, { folder, scene_id, ...rest }) {
+    const local = outputDir(folder, app.config);
+    const target = await app.backend.outputDir(local);
+    const id = await sceneUuid(app, scene_id);
+    const result = (await app.client.post("/v1/scene/model/export/", body({ scene_id: id, folder_path: target, ...rest }))) as Json;
+    const reported = isRecord(result) && Array.isArray(result["exported_files"]) ? result["exported_files"].map(String) : [];
+    return { status: "exported", files: await app.backend.collectOutputDir(local, target, reported) };
+  },
+});
+
+tool({
+  name: "send_models_to_scene",
+  description:
+    "Move models from one scene into another, like PreForm's Send to Build. Models keep their ids and land clear of what is already in the target scene. If the target uses a different printer or support settings their supports are removed (reported as SUPPORTS_CLEARED warnings); run auto_support on the target afterwards. Needs PreFormServer 3.65.0 or later.",
+  annotations: MUTATING,
+  input: z.object({ model_ids: modelIds.min(1), target_scene_id: pathId.describe("Scene to move the models into"), scene_id: sceneId }),
+  async handler(app, { model_ids, target_scene_id, scene_id }) {
+    const [from, to] = await Promise.all([sceneUuid(app, scene_id), sceneUuid(app, target_scene_id)]);
+    return app.client.post("/v1/scene/model/send-to-scene/", { scene_id: from, target_scene_id: to, model_ids });
   },
 });
 

@@ -12,6 +12,30 @@ export interface Backend {
   outputPath(localPath: string): Promise<string>;
   /** After PreFormServer wrote the output, make sure it exists at the local path. */
   collectOutput(localPath: string): Promise<void>;
+  /** Directory PreFormServer should write into for a validated local output directory. */
+  outputDir(localDir: string): Promise<string>;
+  /**
+   * After PreFormServer wrote files into the directory from outputDir, make sure each is in
+   * localDir and return the local paths. `serverFiles` are the paths PreFormServer reported.
+   */
+  collectOutputDir(localDir: string, serverDir: string, serverFiles: string[]): Promise<string[]>;
+}
+
+/**
+ * Local names for files PreFormServer says it wrote into `serverDir`. A reported path outside
+ * that directory, or a name that is not a plain file name, is refused rather than followed.
+ */
+export function namesInServerDir(serverDir: string, serverFiles: string[]): string[] {
+  const norm = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+  const dir = norm(serverDir);
+  return serverFiles.map((f) => {
+    const slash = f.replace(/\\/g, "/");
+    const name = slash.slice(slash.lastIndexOf("/") + 1);
+    if (norm(slash.slice(0, slash.lastIndexOf("/"))) !== dir || !/^[A-Za-z0-9._-]+$/.test(name) || name === "." || name === "..") {
+      throw new Error(`PreFormServer reported a file outside the export directory: ${JSON.stringify(f)}`);
+    }
+    return name;
+  });
 }
 
 export async function waitUntilReachable(baseUrl: string, timeoutMs: number, signal?: AbortSignal): Promise<void> {

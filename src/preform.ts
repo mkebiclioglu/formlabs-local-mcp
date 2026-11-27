@@ -8,8 +8,9 @@
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
+import path from "node:path";
 import { createInterface } from "node:readline";
-import { type Backend, isReachable, waitUntilReachable } from "./backend.js";
+import { type Backend, isReachable, namesInServerDir, waitUntilReachable } from "./backend.js";
 import { DOWNLOAD_PAGE, type Config } from "./config.js";
 import { toServerPath } from "./pathmap.js";
 
@@ -126,5 +127,11 @@ export class LocalBackend implements Backend {
   }
   collectOutput(): Promise<void> {
     return Promise.resolve();
+  }
+  outputDir(localDir: string): Promise<string> {
+    return Promise.resolve(toServerPath(localDir, this.cfg.pathStyle, this.cfg.pathMap));
+  }
+  collectOutputDir(localDir: string, serverDir: string, serverFiles: string[]): Promise<string[]> {
+    return Promise.resolve(namesInServerDir(serverDir, serverFiles).map((name) => path.join(localDir, name)));
   }
 }

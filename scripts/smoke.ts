@@ -72,7 +72,7 @@ async function main(stlArg?: string): Promise<number> {
       if (process.env["SMOKE_ALLOW_SCREENSHOT_FAIL"]) console.log(`[WARN] save_screenshot ${(err as Error).message}`);
       else check("save_screenshot", false, (err as Error).message);
     }
-    const loaded = (await callTool(app, "load_form", { file: form }, ctx)) as { id?: string; models?: unknown[] };
+    const loaded = (await callTool(app, "load_form", { file: form }, ctx)) as { id?: string; models?: { id?: string }[] };
     check("load_form", (loaded.models?.length ?? 0) === 1, `id=${loaded.id}`);
 
     // PreFormServer ships one built-in virtual printer per model ("Form 4", "Fuse 1+", ...;
@@ -84,6 +84,15 @@ async function main(stlArg?: string): Promise<number> {
     // The scene from load_form: the original may be gone if the screenshot crashed PreFormServer.
     const job = (await callTool(app, "print_to_printer", { printer: "Form 4", job_name: "smoke", scene_id: loaded.id ?? sceneId }, ctx)) as { job_id?: string };
     check("print_to_printer (virtual Form 4)", !!job.job_id, `job_id=${job.job_id}`);
+
+    // v1 routes (PreFormServer 3.65.0+): get the mesh back out of the .form, then move it to another build.
+    const exported = (await callTool(app, "export_models", { folder: workdir, scene_id: loaded.id, filename_postfix: "_exported" }, ctx)) as { files?: string[] };
+    const stlOut = exported.files?.[0];
+    check("export_models", exported.files?.length === 1 && !!stlOut && statSync(stlOut).size > 0, JSON.stringify(exported));
+    const spare = (await callTool(app, "create_scene", { machine_type: "FORM-4-0", material_code: "FLGPGR05", layer_thickness_mm: 0.1 }, ctx)) as { id?: string };
+    const moved = (await callTool(app, "send_models_to_scene", { model_ids: [loaded.models?.[0]?.id], scene_id: loaded.id, target_scene_id: spare.id }, ctx)) as { modified_model_ids?: string[]; warnings?: unknown[] };
+    const spareScene = (await callTool(app, "get_scene", { scene_id: spare.id }, ctx)) as { models?: unknown[] };
+    check("send_models_to_scene", moved.modified_model_ids?.length === 1 && spareScene.models?.length === 1, JSON.stringify(moved));
 
     // Fuse X1: PreFormServer 3.63 accepts FUSX-1-0 with its one shipped setting even though
     // /list-materials/ omits the family (src/printers.ts fills the gap). It refuses auto_pack

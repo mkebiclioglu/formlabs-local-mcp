@@ -20,7 +20,7 @@ import { randomBytes } from "node:crypto";
 import { statSync } from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
-import { type Backend, waitUntilReachable } from "./backend.js";
+import { type Backend, namesInServerDir, waitUntilReachable } from "./backend.js";
 import { validateRemoteHost, type Config, type RemoteConfig } from "./config.js";
 import { READY_TOKEN } from "./preform.js";
 import { createInterface } from "node:readline";
@@ -84,6 +84,7 @@ export class RemoteBackend implements Backend {
   private readonly staged = new Map<string, { remote: string; mtimeMs: number }>();
   private readonly log: (line: string) => void;
   private readonly env: NodeJS.ProcessEnv;
+  private exports = 0;
   private readonly sessionId = `${Date.now().toString(36)}${randomBytes(4).toString("hex")}`;
 
   constructor(private readonly cfg: Config, private readonly opts: RemoteOptions) {
@@ -188,6 +189,24 @@ export class RemoteBackend implements Backend {
 
   async collectOutput(localPath: string): Promise<void> {
     await this.scp(`${validateRemoteHost(this.remote.host)}:${this.remoteFor(localPath)}`, localPath);
+  }
+
+  async outputDir(): Promise<string> {
+    const staging = await this.ensureStaging();
+    const dir = `${staging}/export-${++this.exports}`;
+    await this.ssh(`mkdir -p "${dir}"`);
+    return dir;
+  }
+
+  async collectOutputDir(localDir: string, serverDir: string, serverFiles: string[]): Promise<string[]> {
+    const host = validateRemoteHost(this.remote.host);
+    const out: string[] = [];
+    for (const name of namesInServerDir(serverDir, serverFiles)) {
+      const local = path.join(localDir, name);
+      await this.scp(`${host}:${serverDir}/${name}`, local);
+      out.push(local);
+    }
+    return out;
   }
 
   async shutdown(): Promise<void> {

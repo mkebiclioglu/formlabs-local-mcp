@@ -9,7 +9,7 @@
  *
  * Entries are merged into list_printer_types and list_materials only while the server
  * still omits their machine type, so they disappear on their own once Formlabs lists
- * them.
+ * them. PreFormServer 3.65.1 lists the Fuse X1 itself, so this only matters on 3.63-3.64.
  */
 import { isRecord, type Json } from "./client.js";
 
