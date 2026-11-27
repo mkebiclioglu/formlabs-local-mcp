@@ -21,6 +21,7 @@ import { expandHome, type Config } from "./config.js";
 export const MODEL = [".stl", ".obj", ".3mf", ".step", ".stp", ".form"];
 export const FORM = [".form"];
 export const FPS = [".fps"];
+export const STL = [".stl"];
 export const IMAGE = [".png", ".webp"];
 
 export class PathNotAllowed extends Error {}

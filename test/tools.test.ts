@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { Server } from "node:http";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createApp, type AppContext } from "../src/app.js";
 import { PreFormError } from "../src/client.js";
@@ -198,6 +198,7 @@ describe("export_models / send_models_to_scene (v1 routes)", () => {
     let sent: Record<string, unknown> = {};
     const { app, home, calls } = await appWith({
       "GET /scene/default/": (_r, _b, res) => json(res, 200, { id: SCENE, models: [] }),
+      [`GET /scene/${SCENE}/`]: (_r, _b, res) => json(res, 200, { id: SCENE, models: [{ id: MODEL_ID }] }),
       "POST /v1/scene/model/export/": (_r, b, res) => {
         sent = JSON.parse(b);
         json(res, 200, { exported_files: [`${String(sent["folder_path"])}/${MODEL_ID}_v2.stl`] });
@@ -208,7 +209,7 @@ describe("export_models / send_models_to_scene (v1 routes)", () => {
     const out = await callTool(app, "export_models", { folder: dir, filename_postfix: "_v2", export_mode: "CANONICAL_MODEL" }, noProgress);
     expect(sent).toEqual({ scene_id: SCENE, folder_path: dir, filename_postfix: "_v2", export_mode: "CANONICAL_MODEL" });
     expect(out).toEqual({ status: "exported", files: [join(dir, `${MODEL_ID}_v2.stl`)] });
-    expect(calls.map((c) => c.path).filter((p) => p !== "/")).toEqual(["/scene/default/", "/v1/scene/model/export/"]);
+    expect(calls.map((c) => c.path).filter((p) => p !== "/")).toEqual(["/scene/default/", `/scene/${SCENE}/`, "/v1/scene/model/export/"]);
   });
 
   it("checks the folder and the postfix before any HTTP call", async () => {
@@ -218,11 +219,26 @@ describe("export_models / send_models_to_scene (v1 routes)", () => {
     expect(calls).toHaveLength(0);
   });
 
-  it("refuses an exported path outside the folder", async () => {
+  it("refuses an exported path outside the folder, or a file name it did not expect", async () => {
+    let files: string[] = [];
     const { app, home } = await appWith({
-      "POST /v1/scene/model/export/": (_r, _b, res) => json(res, 200, { exported_files: ["/etc/evil.stl"] }),
+      "POST /v1/scene/model/export/": (_r, _b, res) => json(res, 200, { exported_files: files }),
     });
-    await expect(callTool(app, "export_models", { folder: home, scene_id: SCENE }, noProgress)).rejects.toThrow(/outside the export directory/);
+    files = ["/etc/evil.stl"];
+    await expect(callTool(app, "export_models", { folder: home, scene_id: SCENE, model_ids: [MODEL_ID] }, noProgress)).rejects.toThrow(/outside the export directory/);
+    files = [join(home, "other.stl")];
+    await expect(callTool(app, "export_models", { folder: home, scene_id: SCENE, model_ids: [MODEL_ID] }, noProgress)).rejects.toThrow(/unexpected names: other\.stl/);
+  });
+
+  it.skipIf(process.platform === "win32")("refuses before exporting when an expected file name is a symlink out of the allowed roots", async () => {
+    const { app, home, calls } = await appWith({});
+    const outside = tmp();
+    writeFileSync(join(outside, "authorized_keys.stl"), "");
+    symlinkSync(join(outside, "authorized_keys.stl"), join(home, `${MODEL_ID}.stl`));
+    await expect(callTool(app, "export_models", { folder: home, scene_id: SCENE, model_ids: [MODEL_ID] }, noProgress)).rejects.toThrow(/outside the allowed/);
+    symlinkSync(join(outside, "authorized_keys.stl"), join(home, `${SCENE}_all.stl`));
+    await expect(callTool(app, "export_models", { folder: home, scene_id: SCENE, single_file: true, filename_postfix: "_all" }, noProgress)).rejects.toThrow(/outside the allowed/);
+    expect(calls.filter((c) => c.path.startsWith("/v1/"))).toHaveLength(0);
   });
 
   it("moves models between scenes and passes warnings through", async () => {
