@@ -14,12 +14,14 @@
  */
 
 import { existsSync } from "node:fs";
+import path from "node:path";
 import * as z from "zod";
 import type { AppContext } from "./app.js";
 import { isRecord, PreFormError, type Json } from "./client.js";
+import { namesInServerDir } from "./backend.js";
 import { DOWNLOAD_PAGE, isLoopback, managedInstallDir } from "./config.js";
 import { installPreformServer, installedVersion } from "./installer.js";
-import { FORM, FPS, IMAGE, MODEL, inputPath, outputDir, outputPath } from "./paths.js";
+import { FORM, FPS, IMAGE, MODEL, STL, inputPath, outputDir, outputPath } from "./paths.js";
 import { withUnlistedPrinterTypes } from "./printers.js";
 
 export interface ToolCtx {
@@ -385,10 +387,18 @@ tool({
   }),
   async handler(app, { folder, scene_id, ...rest }) {
     const local = outputDir(folder, app.config);
-    const target = await app.backend.outputDir(local);
     const id = await sceneUuid(app, scene_id);
+    // PreFormServer picks the file names, but they are predictable. Check each one like save_form checks
+    // its file, so a symlink planted under an expected name cannot send the write outside the allowed roots.
+    const ids = rest.single_file ? [id] : rest.model_ids?.length ? rest.model_ids : modelsOf(await app.client.get(`/scene/${id}/`)).map((m) => bareId(String(m["id"] ?? "")));
+    const expected = new Set(ids.map((x) => `${x}${rest.filename_postfix ?? ""}.stl`));
+    for (const name of expected) outputPath(path.join(local, name), app.config, STL);
+    const target = await app.backend.outputDir(local);
     const result = (await app.client.post("/v1/scene/model/export/", body({ scene_id: id, folder_path: target, ...rest }))) as Json;
     const reported = isRecord(result) && Array.isArray(result["exported_files"]) ? result["exported_files"].map(String) : [];
+    const expectedLower = new Set([...expected].map((n) => n.toLowerCase()));
+    const unexpected = namesInServerDir(target, reported).filter((n) => !expectedLower.has(n.toLowerCase()));
+    if (unexpected.length) throw new Error(`PreFormServer wrote files with unexpected names: ${unexpected.join(", ")}`);
     return { status: "exported", files: await app.backend.collectOutputDir(local, target, reported) };
   },
 });
