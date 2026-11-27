@@ -20,7 +20,7 @@ Needs Node.js 20 or newer. Nothing else. Published on npm as
 provenance. Pin the version you tested with:
 
 ```bash
-claude mcp add --scope user formlabs -- npx -y formlabs-local-mcp@1.0.14
+claude mcp add --scope user formlabs -- npx -y formlabs-local-mcp@1.0.15
 ```
 
 Using Claude Code? The [plugin](https://mkebiclioglu.github.io/formlabs-claude-skills/)
@@ -34,7 +34,7 @@ For other MCP clients, put the same command in their config:
   "mcpServers": {
     "formlabs": {
       "command": "npx",
-      "args": ["-y", "formlabs-local-mcp@1.0.14"]
+      "args": ["-y", "formlabs-local-mcp@1.0.15"]
     }
   }
 }
@@ -46,7 +46,7 @@ tool, which downloads the current release from Formlabs, verifies Formlabs' code
 signature, and installs it into a folder you own. From a shell the same thing is:
 
 ```bash
-npx -y formlabs-local-mcp@1.0.14 install-preform
+npx -y formlabs-local-mcp@1.0.15 install-preform
 ```
 
 If you already have `PreFormServer.app` in `/Applications`, it is picked up as is.
@@ -65,11 +65,11 @@ If you already have `PreFormServer.app` in `/Applications`, it is picked up as i
 |---|---|
 | Setup | `preform_status`, `install_preform_server`, `health_check` |
 | Scenes | `create_scene`, `list_scenes`, `get_scene`, `update_scene`, `delete_scene`, `load_form` |
-| Models | `import_model`, `get_model`, `update_model`, `duplicate_model`, `replace_model`, `delete_model` |
+| Models | `import_model`, `get_model`, `update_model`, `duplicate_model`, `replace_model`, `delete_model`, `send_models_to_scene` |
 | Prep | `auto_orient`, `auto_support`, `auto_layout`, `fill_build_platform` (SLA), `auto_pack`, `fill_build_chamber`, `pack_and_cage` (SLS), `hollow_model`, `label_model` |
 | Drain holes | `auto_add_drain_holes`, `add_drain_holes` |
 | Analysis | `get_print_validation`, `detect_cups`, `detect_minima`, `detect_supportedness`, `detect_thin_walls`, `get_interferences`, `estimate_print_time` |
-| Export | `save_form`, `save_screenshot`, `save_fps_file` |
+| Export | `save_form`, `save_screenshot`, `save_fps_file`, `export_models` (STL) |
 | Printers | `list_devices`, `get_device`, `discover_devices`, `print_to_printer` |
 | Materials | `list_printer_types`, `list_materials` |
 | Account | `login`, `logout`, `get_user` |
@@ -77,18 +77,21 @@ If you already have `PreFormServer.app` in `/Applications`, it is picked up as i
 Tools carry MCP annotations (`readOnlyHint`, `destructiveHint`) so clients can ask
 before `print_to_printer`, `save_form`, `install_preform_server` or any delete.
 
-Fuse X1: PreFormServer 3.63 (3.63.0 and 3.63.1) prepares jobs for it (`machine_type` `FUSX-1-0`,
-`material_code` `FLP12G01`, 0.11 mm, the one setting it ships) but leaves the
-family out of `list-materials`; `list_printer_types` and `list_materials` add it
-with an `unlisted` note until Formlabs lists it. No other material or layer
-height, and no `auto_pack`, in this release.
+Fuse X1 (`machine_type` `FUSX-1-0`, `material_code` `FLP12G01`, 0.11 mm): PreFormServer 3.65
+lists it in `list-materials`. PreFormServer 3.63 prepared jobs for it but left the family out, so
+on those releases `list_printer_types` and `list_materials` add it with an `unlisted` note.
+
+`export_models` and `send_models_to_scene` use the Local API 1.0 routes (`/v1/scene/model/export/`,
+`/v1/scene/model/send-to-scene/`) and need PreFormServer 3.65.0 or later. `export_models` gets
+the mesh back out of a .form file (without supports); `send_models_to_scene` is PreForm's
+Send to Build.
 
 No printer yet? PreFormServer ships a built-in virtual printer for every model
 (`list_devices` shows them with `connection_type: VIRTUAL`), and
 `print_to_printer` with `"Form 4"` runs the whole job upload against one, so a
 pipeline can be rehearsed end to end before hardware arrives. The integration
 tests do exactly that on macOS, Windows and Linux.
-Tracks Formlabs Local API **0.9.31** (PreFormServer 3.63.1). The installer picks the Apple Silicon
+Tracks Formlabs Local API **1.0.4** (PreFormServer 3.65.1). The installer picks the Apple Silicon
 build on arm64 Macs and the Intel build elsewhere, falling back to Intel for releases that only ship it.
 
 ## Configuration

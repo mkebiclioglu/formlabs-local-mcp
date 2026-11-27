@@ -54,7 +54,7 @@ export function isWindowsNetworkPath(p: string): boolean {
   return /^[\\/]{2}/.test(p);
 }
 
-function check(raw: string, cfg: Config, extensions: string[], mustExist: boolean): string {
+function check(raw: string, cfg: Config, extensions: string[] | "directory", mustExist: boolean): string {
   if (!raw || !raw.trim()) throw new PathNotAllowed("A file path is required.");
   const expanded = expandHome(raw, cfg.home);
   if (!path.isAbsolute(expanded)) {
@@ -69,7 +69,7 @@ function check(raw: string, cfg: Config, extensions: string[], mustExist: boolea
   }
   const resolved = resolveDeep(normalized);
   const ext = path.extname(resolved).toLowerCase();
-  if (!extensions.includes(ext)) {
+  if (extensions !== "directory" && !extensions.includes(ext)) {
     throw new PathNotAllowed(`${JSON.stringify(raw)} must end in one of: ${extensions.join(", ")}.`);
   }
   const roots = cfg.allowedPaths.map(realpathOrSelf);
@@ -87,7 +87,11 @@ function check(raw: string, cfg: Config, extensions: string[], mustExist: boolea
       );
     }
   }
-  if (mustExist) {
+  if (extensions === "directory") {
+    if (!existsSync(resolved) || !statSync(resolved).isDirectory()) {
+      throw new PathNotAllowed(`${JSON.stringify(raw)} does not exist or is not a directory.`);
+    }
+  } else if (mustExist) {
     if (!existsSync(resolved) || !statSync(resolved).isFile()) {
       throw new PathNotAllowed(`${JSON.stringify(raw)} does not exist or is not a file.`);
     }
@@ -105,4 +109,9 @@ export function inputPath(raw: string, cfg: Config, extensions: string[] = MODEL
 /** Validate a path PreFormServer will write. Returns the resolved absolute path. */
 export function outputPath(raw: string, cfg: Config, extensions: string[]): string {
   return check(raw, cfg, extensions, false);
+}
+
+/** Validate an existing directory PreFormServer will write files into. Returns the resolved absolute path. */
+export function outputDir(raw: string, cfg: Config): string {
+  return check(raw, cfg, "directory", true);
 }

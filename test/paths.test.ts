@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { FORM, IMAGE, MODEL, inputPath, isWindowsNetworkPath, outputPath } from "../src/paths.js";
+import { FORM, IMAGE, MODEL, inputPath, isWindowsNetworkPath, outputDir, outputPath } from "../src/paths.js";
 import { makeConfig, tmp } from "./helpers.js";
 
 function sandbox() {
@@ -70,6 +70,21 @@ describe("outputPath", () => {
     const { root, cfg } = sandbox();
     expect(() => outputPath(join(root, "parts", "job.sh"), cfg, FORM)).toThrow(/must end in/);
     expect(outputPath(join(root, "parts", "shot.webp"), cfg, IMAGE)).toMatch(/shot\.webp$/);
+  });
+});
+
+describe("outputDir", () => {
+  it("accepts an existing directory in the allowlist", () => {
+    const { root, cfg } = sandbox();
+    expect(outputDir(join(root, "parts"), cfg)).toBe(join(root, "parts"));
+  });
+  it("refuses files, missing directories, hidden directories and anything outside the allowlist", () => {
+    const { root, cfg } = sandbox();
+    expect(() => outputDir(join(root, "parts", "bracket.stl"), cfg)).toThrow(/not a directory/);
+    expect(() => outputDir(join(root, "missing"), cfg)).toThrow(/not a directory/);
+    expect(() => outputDir(join(root, ".ssh"), cfg)).toThrow(/hidden/);
+    expect(() => outputDir(tmp(), cfg)).toThrow(/outside the allowed/);
+    expect(() => outputDir("parts", cfg)).toThrow(/absolute/);
   });
 });
 

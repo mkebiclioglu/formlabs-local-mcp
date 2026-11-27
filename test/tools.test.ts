@@ -23,7 +23,7 @@ const noProgress = { progress: async () => {}, signal: new AbortController().sig
 describe("tool registry", () => {
   it("registers the full surface with annotations", () => {
     const names = new Set(tools.map((t) => t.name));
-    for (const n of ["health_check", "create_scene", "import_model", "auto_orient", "auto_support", "auto_layout", "auto_pack", "fill_build_platform", "fill_build_chamber", "pack_and_cage", "hollow_model", "label_model", "add_drain_holes", "auto_add_drain_holes", "get_print_validation", "detect_cups", "detect_minima", "detect_supportedness", "detect_thin_walls", "get_interferences", "estimate_print_time", "save_form", "save_screenshot", "save_fps_file", "list_devices", "get_device", "discover_devices", "print_to_printer", "list_materials", "list_printer_types", "login", "logout", "install_preform_server", "preform_status"]) {
+    for (const n of ["health_check", "create_scene", "import_model", "auto_orient", "auto_support", "auto_layout", "auto_pack", "fill_build_platform", "fill_build_chamber", "pack_and_cage", "hollow_model", "label_model", "add_drain_holes", "auto_add_drain_holes", "get_print_validation", "detect_cups", "detect_minima", "detect_supportedness", "detect_thin_walls", "get_interferences", "estimate_print_time", "save_form", "save_screenshot", "save_fps_file", "list_devices", "get_device", "discover_devices", "print_to_printer", "list_materials", "list_printer_types", "login", "logout", "install_preform_server", "preform_status", "export_models", "send_models_to_scene"]) {
       expect(names, n).toContain(n);
     }
     expect(toolByName("print_to_printer").annotations.destructiveHint).toBe(true);
@@ -186,6 +186,55 @@ describe("save_form / save_screenshot", () => {
     const out = await callTool(app, "save_form", { file: join(home, "job.form") }, noProgress);
     expect(out).toMatchObject({ status: "saved" });
     expect(calls.filter((c) => c.path.endsWith("save-form/"))).toHaveLength(1);
+  });
+});
+
+describe("export_models / send_models_to_scene (v1 routes)", () => {
+  const SCENE = "0c6b02e4-c281-4200-b004-64758799fa9c";
+  const OTHER = "4c012427-b852-4a45-b644-a6d2f78210f5";
+  const MODEL_ID = "34401516-657c-466e-a275-99690c191003";
+
+  it("resolves the default scene to its uuid, sends the folder and returns local file paths", async () => {
+    let sent: Record<string, unknown> = {};
+    const { app, home, calls } = await appWith({
+      "GET /scene/default/": (_r, _b, res) => json(res, 200, { id: SCENE, models: [] }),
+      "POST /v1/scene/model/export/": (_r, b, res) => {
+        sent = JSON.parse(b);
+        json(res, 200, { exported_files: [`${String(sent["folder_path"])}/${MODEL_ID}_v2.stl`] });
+      },
+    });
+    const dir = join(home, "exports");
+    mkdirSync(dir);
+    const out = await callTool(app, "export_models", { folder: dir, filename_postfix: "_v2", export_mode: "CANONICAL_MODEL" }, noProgress);
+    expect(sent).toEqual({ scene_id: SCENE, folder_path: dir, filename_postfix: "_v2", export_mode: "CANONICAL_MODEL" });
+    expect(out).toEqual({ status: "exported", files: [join(dir, `${MODEL_ID}_v2.stl`)] });
+    expect(calls.map((c) => c.path).filter((p) => p !== "/")).toEqual(["/scene/default/", "/v1/scene/model/export/"]);
+  });
+
+  it("checks the folder and the postfix before any HTTP call", async () => {
+    const { app, home, calls } = await appWith({});
+    await expect(callTool(app, "export_models", { folder: join(home, "missing") }, noProgress)).rejects.toThrow(/not a directory/);
+    await expect(callTool(app, "export_models", { folder: home, filename_postfix: "/../x" }, noProgress)).rejects.toThrow(/filename_postfix/);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("refuses an exported path outside the folder", async () => {
+    const { app, home } = await appWith({
+      "POST /v1/scene/model/export/": (_r, _b, res) => json(res, 200, { exported_files: ["/etc/evil.stl"] }),
+    });
+    await expect(callTool(app, "export_models", { folder: home, scene_id: SCENE }, noProgress)).rejects.toThrow(/outside the export directory/);
+  });
+
+  it("moves models between scenes and passes warnings through", async () => {
+    let sent: unknown;
+    const result = { modified_model_ids: [MODEL_ID], warnings: [{ code: "SUPPORTS_CLEARED", model_id: MODEL_ID }] };
+    const { app } = await appWith({
+      "GET /scene/default/": (_r, _b, res) => json(res, 200, { id: SCENE }),
+      "POST /v1/scene/model/send-to-scene/": (_r, b, res) => { sent = JSON.parse(b); json(res, 200, result); },
+    });
+    expect(await callTool(app, "send_models_to_scene", { model_ids: [MODEL_ID], target_scene_id: OTHER }, noProgress)).toEqual(result);
+    expect(sent).toEqual({ scene_id: SCENE, target_scene_id: OTHER, model_ids: [MODEL_ID] });
+    await expect(callTool(app, "send_models_to_scene", { model_ids: [], target_scene_id: OTHER }, noProgress)).rejects.toThrow(/model_ids/);
   });
 });
 

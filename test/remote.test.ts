@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createServer } from "node:http";
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { RemoteBackend, sshArgs } from "../src/remote.js";
 import { fakeSshBin, makeConfig, tmp } from "./helpers.js";
@@ -52,6 +52,16 @@ describe.skipIf(isWin)("RemoteBackend", () => {
       await backend.collectOutput(out);
       expect(readFileSync(out, "utf8")).toBe("FORM");
       expect(readFileSync(log, "utf8")).toMatch(/scp .*-oBatchMode=yes/);
+
+      const exportDir = await backend.outputDir();
+      expect(exportDir).toMatch(/\/remote\/stage\/export-1$/);
+      mkdirSync(exportDir, { recursive: true });
+      writeFileSync(join(exportDir, "m1.stl"), "STL");
+      const localDir = join(home, "exports");
+      mkdirSync(localDir);
+      expect(await backend.collectOutputDir(localDir, exportDir, [`${exportDir}/m1.stl`])).toEqual([join(localDir, "m1.stl")]);
+      expect(readFileSync(join(localDir, "m1.stl"), "utf8")).toBe("STL");
+      await expect(backend.collectOutputDir(localDir, exportDir, ["/etc/passwd"])).rejects.toThrow(/outside the export directory/);
     } finally {
       await backend.shutdown();
       http.close();

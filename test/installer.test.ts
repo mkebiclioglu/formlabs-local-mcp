@@ -7,6 +7,18 @@ import { fakePreform, makeConfig, makeZip, tmp } from "./helpers.js";
 const fixture = readFileSync(new URL("./fixtures/downloads.html", import.meta.url), "utf8");
 
 describe("parseDownloadsPage", () => {
+  it("reads the Local API 1.0 rows, whose version is the link text of the shared API reference", () => {
+    const releases = parseDownloadsPage(readFileSync(new URL("./fixtures/downloads-v1.html", import.meta.url), "utf8"));
+    expect(releases.map((r) => r.version)).toEqual(["3.65.1", "3.65.0", "3.64.2", "3.64.1", "3.64.0", "3.63.1"]);
+    const [latest, withWheel, , unlabelled, first, last09] = releases;
+    expect(latest).toMatchObject({ version: "3.65.1", apiVersion: "1.0.4", date: "November 20, 2026" });
+    expect(Object.keys(latest!.urls).sort()).toEqual(["mac", "mac-arm64", "win"]);
+    expect(withWheel!.apiVersion).toBe("1.0.3");
+    expect(Object.keys(withWheel!.urls).sort()).toEqual(["mac", "mac-arm64", "win"]); // the Python wheel link is not a server build
+    expect(unlabelled!.apiVersion).toBeUndefined(); // a row with only download links
+    expect(first).toMatchObject({ apiVersion: "1.0.0", date: "October 14, 2026" });
+    expect(last09).toMatchObject({ apiVersion: "0.9.31", date: "September 25, 2026" });
+  });
   it("extracts releases with version, date, api version and per-platform urls", () => {
     const releases = parseDownloadsPage(fixture);
     expect(releases.length).toBeGreaterThanOrEqual(5);

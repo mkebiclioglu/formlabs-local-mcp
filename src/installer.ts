@@ -133,7 +133,8 @@ export function parseDownloadsPage(html: string): Release[] {
       byVersion.set(version, release);
     }
     if (!release) continue;
-    const api = /formlabs-local-api-v(\d+\.\d+\.\d+)\.html/.exec(row);
+    // 0.9.x rows link a versioned doc page; from 1.0.0 the link is the shared API reference and the version is the link text.
+    const api = /formlabs-local-api-v(\d+\.\d+\.\d+)\.html/.exec(row) ?? />\s*(\d+\.\d+\.\d+) [Dd]ocumentation\s*</.exec(row);
     if (api?.[1] && !release.apiVersion) release.apiVersion = api[1];
     const date = />\s*([A-Z][a-z]+ \d{1,2}, \d{4})\s*</.exec(row);
     if (date?.[1] && !release.date) release.date = date[1];
